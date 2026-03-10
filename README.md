@@ -103,6 +103,7 @@ py -3 main.py
 The guided desktop workbench provides:
 
 - startup launcher with guided UI or classic console wizard
+- a refreshed light theme with higher-contrast tabs, accent actions, danger-stop styling, and cleaner tables
 - settings pages:
   - `Review Setup`
   - `Discovery`

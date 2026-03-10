@@ -71,6 +71,13 @@ Two run modes exist:
 
 The desktop workbench is split into tabs and settings pages.
 
+Visual defaults:
+
+- light, high-contrast theme intended to keep long review sessions readable
+- accent primary action button for `Start Run`
+- dedicated danger styling for `Force Stop`
+- muted secondary actions and cleaner notebook/table styling for easier scanning
+
 Main tabs:
 
 - `Settings`

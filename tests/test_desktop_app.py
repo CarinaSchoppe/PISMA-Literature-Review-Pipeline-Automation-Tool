@@ -118,6 +118,19 @@ class DesktopWorkbenchTests(unittest.TestCase):
         self.assertEqual(self.workbench.field_widget_types["analysis_passes"], "pass_builder")
         self.assertEqual(str(self.workbench.text_widgets["analysis_passes"].cget("state")), "disabled")
 
+    def test_theme_styles_are_configured_for_modern_toolbar_and_tabs(self) -> None:
+        self.assertEqual(self.workbench.active_theme, "clam")
+        self.assertEqual(self.workbench.root.cget("bg"), self.workbench.PALETTE["window_bg"])
+        self.assertEqual(self.workbench.toolbar_buttons["Start Run"].cget("style"), "Accent.TButton")
+        self.assertEqual(self.workbench.toolbar_buttons["Analyze Stored Results"].cget("style"), "Secondary.TButton")
+        self.assertEqual(self.workbench.toolbar_buttons["Force Stop"].cget("style"), "Danger.TButton")
+        self.assertEqual(self.workbench.notebook.cget("style"), "Workbench.TNotebook")
+        self.assertEqual(self.workbench.status_label.cget("style"), "Status.TLabel")
+        self.assertEqual(
+            self.workbench.style.lookup("Workbench.TNotebook.Tab", "background", ("selected",)),
+            self.workbench.PALETTE["surface_bg"],
+        )
+
     def test_analysis_pass_builder_helpers_round_trip(self) -> None:
         passes = [
             {

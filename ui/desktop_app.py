@@ -10,6 +10,7 @@ import sys
 import threading
 import textwrap
 import tkinter as tk
+import tkinter.font as tkfont
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from typing import Any
@@ -63,9 +64,9 @@ class HoverTooltip:
             except tk.TclError:
                 # Some Tk builds do not expose every window manager attribute.
                 pass
-            frame = ttk.Frame(self.window, padding=8, relief="solid", borderwidth=1)
+            frame = ttk.Frame(self.window, padding=8, style="Tooltip.TFrame")
             frame.pack(fill="both", expand=True)
-            self.label = ttk.Label(frame, justify="left", wraplength=480)
+            self.label = ttk.Label(frame, justify="left", wraplength=480, style="Tooltip.TLabel")
             self.label.pack(fill="both", expand=True)
         if self.label is not None:
             self.label.configure(text=message)
@@ -91,6 +92,20 @@ class HoverTooltip:
 
 class DesktopWorkbench:
     """Tkinter workbench for guided configuration and result inspection."""
+
+    PALETTE = {
+        "window_bg": "#f4f7fb",
+        "surface_bg": "#ffffff",
+        "muted_surface": "#eef3f9",
+        "border": "#d5dfeb",
+        "text": "#17324d",
+        "muted_text": "#5d7188",
+        "accent": "#1f6feb",
+        "accent_active": "#1557b0",
+        "danger": "#c0392b",
+        "danger_active": "#992d22",
+        "selection": "#dce9ff",
+    }
 
     SETTINGS_PAGES = [
         ("Review Setup", ["Review Brief"]),
@@ -754,6 +769,8 @@ class DesktopWorkbench:
         self.root = tk.Tk()
         self.root.title("PRISMA Literature Review Workbench")
         self.root.geometry("1400x900")
+        self.style = ttk.Style(self.root)
+        self.active_theme = self._configure_theme()
         self.profile_manager = ProfileManager()
         self.message_queue: queue.Queue[tuple[str, Any]] = queue.Queue()
         self.run_thread: threading.Thread | None = None
@@ -778,6 +795,8 @@ class DesktopWorkbench:
         self.field_to_settings_page: dict[str, str] = {}
         self.treeviews: dict[str, ttk.Treeview] = {}
         self.table_frames: dict[str, ttk.Frame] = {}
+        self.toolbar_buttons: dict[str, ttk.Button] = {}
+        self.status_label: ttk.Label | None = None
         self.outputs_tree: ttk.Treeview | None = None
         self.handbook_tree: ttk.Treeview | None = None
         self.handbook_text: scrolledtext.ScrolledText | None = None
@@ -808,6 +827,198 @@ class DesktopWorkbench:
         self.root.after(100, self._poll_messages)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
+    def _configure_theme(self) -> str:
+        """Apply a consistent light theme so the guided workbench feels modern and easier to scan."""
+
+        preferred_theme = "clam" if "clam" in self.style.theme_names() else self.style.theme_use()
+        self.style.theme_use(preferred_theme)
+
+        base_font = tkfont.nametofont("TkDefaultFont")
+        base_font.configure(family="Segoe UI", size=10)
+        text_font = tkfont.nametofont("TkTextFont")
+        text_font.configure(family="Segoe UI", size=10)
+        heading_font = tkfont.nametofont("TkHeadingFont")
+        heading_font.configure(family="Segoe UI Semibold", size=10)
+
+        self.root.configure(background=self.PALETTE["window_bg"])
+        self.root.option_add("*Background", self.PALETTE["window_bg"])
+        self.root.option_add("*Foreground", self.PALETTE["text"])
+        self.root.option_add("*Text.background", self.PALETTE["surface_bg"])
+        self.root.option_add("*Text.foreground", self.PALETTE["text"])
+        self.root.option_add("*Text.insertBackground", self.PALETTE["text"])
+
+        self.style.configure(".", background=self.PALETTE["window_bg"], foreground=self.PALETTE["text"])
+        self.style.configure("TFrame", background=self.PALETTE["window_bg"])
+        self.style.configure("Surface.TFrame", background=self.PALETTE["surface_bg"])
+        self.style.configure(
+            "TLabel",
+            background=self.PALETTE["window_bg"],
+            foreground=self.PALETTE["text"],
+            font=("Segoe UI", 10),
+        )
+        self.style.configure(
+            "Muted.TLabel",
+            background=self.PALETTE["window_bg"],
+            foreground=self.PALETTE["muted_text"],
+            font=("Segoe UI", 10),
+        )
+        self.style.configure(
+            "Status.TLabel",
+            background=self.PALETTE["surface_bg"],
+            foreground=self.PALETTE["text"],
+            padding=10,
+            relief="solid",
+            borderwidth=1,
+        )
+        self.style.configure(
+            "TLabelframe",
+            background=self.PALETTE["surface_bg"],
+            bordercolor=self.PALETTE["border"],
+            relief="solid",
+            borderwidth=1,
+            padding=10,
+        )
+        self.style.configure(
+            "TLabelframe.Label",
+            background=self.PALETTE["surface_bg"],
+            foreground=self.PALETTE["text"],
+            font=("Segoe UI Semibold", 10),
+        )
+        self.style.configure(
+            "Card.TLabelframe",
+            background=self.PALETTE["surface_bg"],
+            bordercolor=self.PALETTE["border"],
+            relief="solid",
+            borderwidth=1,
+            padding=12,
+        )
+        self.style.configure(
+            "Card.TLabelframe.Label",
+            background=self.PALETTE["surface_bg"],
+            foreground=self.PALETTE["text"],
+            font=("Segoe UI Semibold", 10),
+        )
+        self.style.configure(
+            "Workbench.TNotebook",
+            background=self.PALETTE["window_bg"],
+            borderwidth=0,
+            tabmargins=(0, 0, 0, 0),
+        )
+        self.style.configure(
+            "Workbench.TNotebook.Tab",
+            background=self.PALETTE["muted_surface"],
+            foreground=self.PALETTE["muted_text"],
+            padding=(16, 10),
+            font=("Segoe UI Semibold", 10),
+        )
+        self.style.map(
+            "Workbench.TNotebook.Tab",
+            background=[("selected", self.PALETTE["surface_bg"]), ("active", self.PALETTE["selection"])],
+            foreground=[("selected", self.PALETTE["text"]), ("active", self.PALETTE["text"])],
+        )
+        self.style.configure(
+            "TButton",
+            padding=(12, 8),
+            relief="flat",
+            borderwidth=0,
+            background=self.PALETTE["muted_surface"],
+            foreground=self.PALETTE["text"],
+            font=("Segoe UI Semibold", 10),
+        )
+        self.style.map(
+            "TButton",
+            background=[("active", self.PALETTE["selection"])],
+            foreground=[("disabled", self.PALETTE["muted_text"])],
+        )
+        self.style.configure(
+            "Accent.TButton",
+            background=self.PALETTE["accent"],
+            foreground="#ffffff",
+        )
+        self.style.map(
+            "Accent.TButton",
+            background=[("active", self.PALETTE["accent_active"])],
+            foreground=[("disabled", "#f5f7fb")],
+        )
+        self.style.configure(
+            "Secondary.TButton",
+            background=self.PALETTE["surface_bg"],
+            foreground=self.PALETTE["text"],
+            borderwidth=1,
+            relief="solid",
+        )
+        self.style.map(
+            "Secondary.TButton",
+            background=[("active", self.PALETTE["selection"])],
+        )
+        self.style.configure(
+            "Danger.TButton",
+            background=self.PALETTE["danger"],
+            foreground="#ffffff",
+        )
+        self.style.map(
+            "Danger.TButton",
+            background=[("active", self.PALETTE["danger_active"])],
+            foreground=[("disabled", "#f8e4e1")],
+        )
+        self.style.configure(
+            "TCheckbutton",
+            background=self.PALETTE["window_bg"],
+            foreground=self.PALETTE["text"],
+            font=("Segoe UI", 10),
+        )
+        self.style.configure(
+            "TRadiobutton",
+            background=self.PALETTE["surface_bg"],
+            foreground=self.PALETTE["text"],
+            font=("Segoe UI", 10),
+        )
+        self.style.configure(
+            "TCombobox",
+            fieldbackground=self.PALETTE["surface_bg"],
+            background=self.PALETTE["surface_bg"],
+            foreground=self.PALETTE["text"],
+            arrowsize=14,
+        )
+        self.style.configure(
+            "TSpinbox",
+            fieldbackground=self.PALETTE["surface_bg"],
+            background=self.PALETTE["surface_bg"],
+            foreground=self.PALETTE["text"],
+            arrowsize=14,
+        )
+        self.style.configure(
+            "Treeview",
+            background=self.PALETTE["surface_bg"],
+            fieldbackground=self.PALETTE["surface_bg"],
+            foreground=self.PALETTE["text"],
+            bordercolor=self.PALETTE["border"],
+            rowheight=28,
+        )
+        self.style.map("Treeview", background=[("selected", self.PALETTE["selection"])])
+        self.style.configure(
+            "Treeview.Heading",
+            background=self.PALETTE["muted_surface"],
+            foreground=self.PALETTE["text"],
+            relief="flat",
+            font=("Segoe UI Semibold", 10),
+            padding=(8, 6),
+        )
+        self.style.configure(
+            "Tooltip.TFrame",
+            background=self.PALETTE["surface_bg"],
+            bordercolor=self.PALETTE["border"],
+            relief="solid",
+            borderwidth=1,
+        )
+        self.style.configure(
+            "Tooltip.TLabel",
+            background=self.PALETTE["surface_bg"],
+            foreground=self.PALETTE["text"],
+            font=("Segoe UI", 10),
+        )
+        return preferred_theme
+
     def run(self) -> int:
         """Enter the Tk event loop until the user closes the application window."""
 
@@ -817,28 +1028,44 @@ class DesktopWorkbench:
     def _build_layout(self) -> None:
         """Construct the top-level toolbar, notebook, and status bar widgets."""
 
-        toolbar = ttk.Frame(self.root, padding=8)
+        toolbar = ttk.Frame(self.root, padding=10, style="Surface.TFrame")
         toolbar.pack(fill="x")
-        start_button = ttk.Button(toolbar, text="Start Run", command=self._start_run)
+        start_button = ttk.Button(toolbar, text="Start Run", command=self._start_run, style="Accent.TButton")
         start_button.pack(side="left", padx=4)
         analyze_button = ttk.Button(
             toolbar,
             text="Analyze Stored Results",
             command=lambda: self._start_run(skip_discovery_override=True, run_mode_override="analyze"),
+            style="Secondary.TButton",
         )
         analyze_button.pack(side="left", padx=4)
-        force_stop_button = ttk.Button(toolbar, text="Force Stop", command=self._force_stop)
+        force_stop_button = ttk.Button(toolbar, text="Force Stop", command=self._force_stop, style="Danger.TButton")
         force_stop_button.pack(side="left", padx=4)
-        load_config_button = ttk.Button(toolbar, text="Load Config", command=self._load_config_file)
+        load_config_button = ttk.Button(toolbar, text="Load Config", command=self._load_config_file, style="Secondary.TButton")
         load_config_button.pack(side="left", padx=4)
-        save_profile_button = ttk.Button(toolbar, text="Save Profile", command=self._save_profile)
+        save_profile_button = ttk.Button(toolbar, text="Save Profile", command=self._save_profile, style="Secondary.TButton")
         save_profile_button.pack(side="left", padx=4)
-        load_profile_button = ttk.Button(toolbar, text="Load Profile", command=self._load_profile)
+        load_profile_button = ttk.Button(toolbar, text="Load Profile", command=self._load_profile, style="Secondary.TButton")
         load_profile_button.pack(side="left", padx=4)
-        refresh_button = ttk.Button(toolbar, text="Refresh Results", command=self._refresh_results_from_disk)
+        refresh_button = ttk.Button(toolbar, text="Refresh Results", command=self._refresh_results_from_disk, style="Secondary.TButton")
         refresh_button.pack(side="left", padx=4)
-        open_results_button = ttk.Button(toolbar, text="Open Results Folder", command=self._open_results_dir)
+        open_results_button = ttk.Button(
+            toolbar,
+            text="Open Results Folder",
+            command=self._open_results_dir,
+            style="Secondary.TButton",
+        )
         open_results_button.pack(side="left", padx=4)
+        self.toolbar_buttons = {
+            "Start Run": start_button,
+            "Analyze Stored Results": analyze_button,
+            "Force Stop": force_stop_button,
+            "Load Config": load_config_button,
+            "Save Profile": save_profile_button,
+            "Load Profile": load_profile_button,
+            "Refresh Results": refresh_button,
+            "Open Results Folder": open_results_button,
+        }
         ttk.Checkbutton(
             toolbar,
             text="Hover Help",
@@ -865,10 +1092,11 @@ class DesktopWorkbench:
         self.profile_combo.pack(side="left")
         self.profile_combo.bind("<<ComboboxSelected>>", lambda _event: self._load_profile())
 
-        status_bar = ttk.Label(self.root, textvariable=self.status_var, anchor="w", padding=8)
+        status_bar = ttk.Label(self.root, textvariable=self.status_var, anchor="w", style="Status.TLabel")
         status_bar.pack(fill="x", side="bottom")
+        self.status_label = status_bar
 
-        notebook = ttk.Notebook(self.root)
+        notebook = ttk.Notebook(self.root, style="Workbench.TNotebook")
         self.notebook = notebook
         notebook.pack(fill="both", expand=True)
 
@@ -897,7 +1125,7 @@ class DesktopWorkbench:
 
     def _build_settings_tab(self) -> None:
         """Render the grouped configuration form used to build a `ResearchConfig`."""
-        container = ttk.Frame(self.settings_tab, padding=12)
+        container = ttk.Frame(self.settings_tab, padding=12, style="Surface.TFrame")
         container.pack(fill="both", expand=True)
         container.columnconfigure(0, weight=1)
         container.rowconfigure(2, weight=1)
@@ -911,21 +1139,22 @@ class DesktopWorkbench:
             ),
             wraplength=1180,
             justify="left",
+            style="Muted.TLabel",
         ).grid(row=0, column=0, sticky="ew", pady=(0, 8))
 
-        quick_access = ttk.LabelFrame(container, text="Quick Access", padding=10)
+        quick_access = ttk.LabelFrame(container, text="Quick Access", padding=10, style="Card.TLabelframe")
         quick_access.grid(row=1, column=0, sticky="ew", pady=(0, 8))
         quick_access.columnconfigure(0, weight=1)
         quick_access.columnconfigure(1, weight=1)
         self._build_settings_quick_access(quick_access)
 
-        page_notebook = ttk.Notebook(container)
+        page_notebook = ttk.Notebook(container, style="Workbench.TNotebook")
         page_notebook.grid(row=2, column=0, sticky="nsew")
         self.settings_pages_notebook = page_notebook
 
         grouped_fields = {section_name: field_names for section_name, field_names in self.GROUPS}
         for page_name, section_names in self.SETTINGS_PAGES:
-            page = ttk.Frame(page_notebook, padding=10)
+            page = ttk.Frame(page_notebook, padding=10, style="Surface.TFrame")
             page.columnconfigure(0, weight=1)
             page_notebook.add(page, text=page_name)
             self.settings_page_frames[page_name] = page
@@ -938,6 +1167,7 @@ class DesktopWorkbench:
                 ),
                 wraplength=1120,
                 justify="left",
+                style="Muted.TLabel",
             )
             intro.grid(row=0, column=0, sticky="w", pady=(0, 8))
             self._bind_hover_help(intro, f"Settings page: {page_name}.")
@@ -957,7 +1187,7 @@ class DesktopWorkbench:
     ) -> None:
         """Render one logical settings group inside the selected settings page."""
 
-        frame = ttk.LabelFrame(parent, text=section_name, padding=10)
+        frame = ttk.LabelFrame(parent, text=section_name, padding=10, style="Card.TLabelframe")
         frame.grid(row=row, column=0, sticky="ew", pady=6)
         frame.columnconfigure(1, weight=1)
         self.section_frames[section_name] = frame
