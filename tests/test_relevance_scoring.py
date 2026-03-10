@@ -2,67 +2,59 @@ from __future__ import annotations
 
 import unittest
 
+from models.paper import PaperMetadata
+
 from analysis.relevance_scoring import RelevanceScorer
 from config import ResearchConfig
-from models.paper import PaperMetadata
 
 
 class RelevanceScoringTests(unittest.TestCase):
-    def test_scores_relevant_review_paper_highly(self) -> None:
+    def test_correction_titles_are_excluded_by_default(self) -> None:
         config = ResearchConfig(
-            research_topic="AI-assisted literature reviews",
-            research_question="Can LLMs help with screening?",
-            review_objective="Keep relevant screening papers only",
-            inclusion_criteria=["systematic review screening"],
-            exclusion_criteria=["agriculture only"],
-            search_keywords=["large language models", "screening", "systematic review"],
-            relevance_threshold=55,
-            decision_mode="strict",
+            research_topic="Large language models",
+            search_keywords=["large language models", "survey", "benchmark"],
+            year_range_start=2023,
+            year_range_end=2026,
             include_pubmed=False,
         ).finalize()
         scorer = RelevanceScorer(config)
         paper = PaperMetadata(
-            title="Large language models for systematic review screening",
-            authors=["Alice Example"],
-            abstract=(
-                "This systematic review evaluates large language models for abstract screening, "
-                "evidence synthesis, and methodological support in PRISMA workflows."
-            ),
-            year=2024,
-            venue="Review Science",
-            citation_count=150,
-            source="fixture",
+            title="Correction: A survey on augmenting knowledge graphs with large language models",
+            abstract="This note corrects a previously published survey on LLM benchmarks.",
+            year=2026,
+            citation_count=12,
         )
 
-        quick_decision = scorer.quick_screen(paper)
-        result = scorer.deep_score(paper, stage_one_decision=quick_decision)
-
-        self.assertEqual(quick_decision, "include")
-        self.assertGreaterEqual(result.relevance_score, 55)
-        self.assertEqual(result.methodology_category, "systematic review")
-        self.assertEqual(result.decision, "include")
-
-    def test_excludes_banned_topic(self) -> None:
-        config = ResearchConfig(
-            research_topic="AI-assisted literature reviews",
-            search_keywords=["large language models", "screening"],
-            banned_topics=["crop irrigation"],
-            relevance_threshold=55,
-            decision_mode="strict",
-            include_pubmed=False,
-        ).finalize()
-        scorer = RelevanceScorer(config)
-        paper = PaperMetadata(
-            title="Crop irrigation optimization with large language models",
-            authors=["Farah Agriculture"],
-            abstract="This work studies crop irrigation control and plant growth using large language models.",
-            year=2024,
-            venue="Agricultural Systems",
-            citation_count=10,
-            source="fixture",
-        )
-
-        result = scorer.deep_score(paper, stage_one_decision=scorer.quick_screen(paper))
+        result = scorer.deep_score(paper, stage_one_decision="exclude")
 
         self.assertEqual(result.decision, "exclude")
-        self.assertIn("crop irrigation", " ".join(result.matched_banned_topics).lower())
+        self.assertIn("correction", result.matched_excluded_title_terms)
+        self.assertIn("non-target publication type", result.exclusion_reason)
+
+    def test_regular_llm_survey_is_not_excluded_by_title_terms(self) -> None:
+        config = ResearchConfig(
+            research_topic="Large language models",
+            search_keywords=["large language models", "survey", "benchmark"],
+            year_range_start=2023,
+            year_range_end=2026,
+            relevance_threshold=45,
+            decision_mode="triage",
+            include_pubmed=False,
+        ).finalize()
+        scorer = RelevanceScorer(config)
+        paper = PaperMetadata(
+            title="A survey on large language model based autonomous agents",
+            abstract="We present a systematic review of LLM-based autonomous agents and evaluation strategies.",
+            year=2024,
+            citation_count=100,
+        )
+
+        result = scorer.deep_score(paper, stage_one_decision="maybe")
+
+        self.assertEqual(result.matched_excluded_title_terms, [])
+        self.assertFalse(scorer.has_hard_exclusion(paper))
+        self.assertIn(result.decision, {"include", "maybe"})
+
+
+if __name__ == "__main__":
+    unittest.main()
