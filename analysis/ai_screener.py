@@ -1,3 +1,5 @@
+"""Heuristic and LLM-backed screening logic for topic relevance assessment."""
+
 from __future__ import annotations
 
 import json
@@ -14,6 +16,8 @@ LOGGER = logging.getLogger(__name__)
 
 
 class AIScreener:
+    """Apply staged relevance screening and optional review summarization."""
+
     def __init__(self, config: ResearchConfig) -> None:
         self.config = config
         self.scorer = RelevanceScorer(config)
@@ -21,6 +25,8 @@ class AIScreener:
         self.llm_enabled = self.llm_client.enabled
 
     def screen(self, paper: PaperMetadata) -> ScreeningResult:
+        """Screen one paper using hard exclusions, stage-one triage, and deep scoring."""
+
         if self.scorer.has_hard_exclusion(paper):
             LOGGER.info("Hard exclusion triggered for '%s'.", paper.title)
             return self.scorer.deep_score(paper, stage_one_decision="exclude")
@@ -43,6 +49,8 @@ class AIScreener:
         return self.scorer.deep_score(paper, stage_one_decision=stage_one)
 
     def summarize_review(self, papers: list[PaperMetadata]) -> str | None:
+        """Summarize a shortlist into narrative review text when an LLM is available."""
+
         if not self.llm_enabled or not papers:
             return None
         shortlist = [
@@ -73,6 +81,8 @@ class AIScreener:
         return payload if payload else None
 
     def _llm_stage_one(self, paper: PaperMetadata) -> str | None:
+        """Ask an LLM for the quick include/maybe/exclude triage label."""
+
         prompt = (
             "Classify the paper for Stage 1 screening. Return only JSON with key 'decision' "
             "and value one of include, maybe, exclude.\n"
@@ -94,6 +104,8 @@ class AIScreener:
         return None
 
     def _llm_stage_two(self, paper: PaperMetadata, stage_one: str) -> ScreeningResult | None:
+        """Ask an LLM for structured scoring details and decision rationale."""
+
         prompt = (
             "Assess the paper and return JSON with keys: relevance_score (0-100), explanation, "
             "extracted_passage, methodology_category, domain_category, decision, retain_reason, "
@@ -114,6 +126,27 @@ class AIScreener:
         if not response:
             return None
         parsed = self._parse_json_response(response)
+        if not parsed:
+            LOGGER.warning(
+                "LLM Stage 2 returned no valid JSON for '%s'; falling back to heuristic scoring.",
+                paper.title,
+            )
+            return None
+
+        decision = str(parsed.get("decision", "")).lower().strip()
+        if decision not in {"include", "maybe", "exclude"}:
+            LOGGER.warning(
+                "LLM Stage 2 returned an invalid decision for '%s'; falling back to heuristic scoring.",
+                paper.title,
+            )
+            return None
+
+        if "relevance_score" not in parsed:
+            LOGGER.warning(
+                "LLM Stage 2 returned no relevance score for '%s'; falling back to heuristic scoring.",
+                paper.title,
+            )
+            return None
         try:
             return ScreeningResult(
                 stage_one_decision=stage_one,
@@ -122,7 +155,7 @@ class AIScreener:
                 extracted_passage=str(parsed.get("extracted_passage", "")),
                 methodology_category=str(parsed.get("methodology_category", "unspecified")),
                 domain_category=str(parsed.get("domain_category", "general")),
-                decision=str(parsed.get("decision", "maybe")).lower(),
+                decision=decision,
                 matched_inclusion_criteria=list(parsed.get("matched_inclusion_criteria", []) or []),
                 matched_exclusion_criteria=list(parsed.get("matched_exclusion_criteria", []) or []),
                 matched_banned_topics=list(parsed.get("matched_banned_topics", []) or []),
@@ -136,6 +169,8 @@ class AIScreener:
             return None
 
     def _chat_completion(self, *, system_prompt: str, user_prompt: str) -> str | None:
+        """Send a chat-style prompt to the configured LLM client."""
+
         if self.config.log_llm_prompts and self.config.verbosity == "debug":
             LOGGER.debug("LLM system prompt: %s", system_prompt[:1000])
             LOGGER.debug("LLM user prompt: %s", user_prompt[:2000])
@@ -145,6 +180,8 @@ class AIScreener:
         return response.content
 
     def _parse_json_response(self, text: str) -> dict[str, Any]:
+        """Extract a JSON object from a raw LLM response, including fenced code blocks."""
+
         candidate = text.strip()
         if candidate.startswith("```"):
             candidate = candidate.strip("`")

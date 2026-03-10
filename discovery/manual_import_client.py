@@ -1,3 +1,5 @@
+"""Import client for CSV or JSON metadata exports from external literature tools."""
+
 from __future__ import annotations
 
 import json
@@ -5,12 +7,14 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+from models.paper import PaperMetadata
 
 from config import ResearchConfig
-from models.paper import PaperMetadata
 
 
 class ManualImportClient:
+    """Load manually exported literature records into the shared paper model."""
+
     def __init__(
         self,
         config: ResearchConfig,
@@ -25,6 +29,8 @@ class ManualImportClient:
         self.source_name = source_name
 
     def search(self) -> list[PaperMetadata]:
+        """Read the configured import file and convert each row into a paper record."""
+
         rows = self._load_rows()
         papers: list[PaperMetadata] = []
         for row in rows:
@@ -54,6 +60,8 @@ class ManualImportClient:
         return papers
 
     def _load_rows(self) -> list[dict[str, Any]]:
+        """Load CSV or JSON rows from the configured manual import file."""
+
         if self.path.suffix.lower() == ".json":
             payload = json.loads(self.path.read_text(encoding="utf-8"))
             if isinstance(payload, list):
@@ -63,6 +71,8 @@ class ManualImportClient:
         return dataframe.to_dict(orient="records")
 
     def _to_bool(self, value: Any) -> bool:
+        """Normalize permissive truthy values commonly found in export files."""
+
         if isinstance(value, bool):
             return value
         if value is None:

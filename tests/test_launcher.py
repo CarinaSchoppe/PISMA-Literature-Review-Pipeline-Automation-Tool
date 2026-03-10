@@ -1,3 +1,5 @@
+"""Tests for the startup launcher that chooses UI, wizard, or headless execution."""
+
 from __future__ import annotations
 
 import unittest
@@ -7,6 +9,8 @@ from ui.launcher import LaunchMode, has_explicit_run_arguments, prompt_for_launc
 
 
 class LauncherTests(unittest.TestCase):
+    """Verify launcher mode detection and menu handling."""
+
     def test_has_explicit_run_arguments_ignores_ui_switch(self) -> None:
         parser = build_arg_parser()
         args = parser.parse_args(["--ui"])

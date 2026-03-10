@@ -1,3 +1,5 @@
+"""Tests for the pluggable LLM client adapters used by the screening layer."""
+
 from __future__ import annotations
 
 import unittest
@@ -8,6 +10,8 @@ from config import ResearchConfig
 
 
 class _FakeGenerator:
+    """Minimal fake text-generation pipeline used to isolate the HF client adapter."""
+
     def __init__(self) -> None:
         self.calls: list[tuple[object, dict[str, object]]] = []
 
@@ -24,11 +28,15 @@ class _FakeGenerator:
 
 
 class _FakeTorch:
+    """Subset of torch dtypes needed by the local HF client tests."""
+
     float16 = "float16"
     bfloat16 = "bfloat16"
 
 
 class LLMClientTests(unittest.TestCase):
+    """Exercise local-runtime success and fallback behavior for LLM client creation."""
+
     def test_build_huggingface_client_uses_local_runtime(self) -> None:
         fake_generator = _FakeGenerator()
 

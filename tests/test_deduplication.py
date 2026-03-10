@@ -1,12 +1,17 @@
+"""Tests for record deduplication across overlapping discovery sources."""
+
 from __future__ import annotations
 
 import unittest
 
 from models.paper import PaperMetadata
+
 from utils.deduplication import deduplicate_papers
 
 
 class DeduplicationTests(unittest.TestCase):
+    """Verify DOI-based and title-based merge behavior."""
+
     def test_merges_same_doi_records(self) -> None:
         papers = [
             PaperMetadata(
@@ -36,4 +41,3 @@ class DeduplicationTests(unittest.TestCase):
         self.assertIn("Bob", deduplicated[0].authors)
         self.assertEqual(deduplicated[0].citation_count, 15)
         self.assertEqual(deduplicated[0].abstract, "a much longer abstract for the same paper")
-

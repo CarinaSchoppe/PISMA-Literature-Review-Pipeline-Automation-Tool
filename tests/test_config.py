@@ -1,3 +1,5 @@
+"""Tests for configuration validation, CLI parsing, and config-file loading."""
+
 from __future__ import annotations
 
 import tempfile
@@ -9,6 +11,8 @@ from config import ResearchConfig, build_arg_parser, parse_analysis_pass
 
 
 class ConfigTests(unittest.TestCase):
+    """Exercise the configuration layer's normalization and parsing behavior."""
+
     def test_finalize_creates_query_key_and_directories(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

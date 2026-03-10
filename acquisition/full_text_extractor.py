@@ -1,17 +1,22 @@
+"""Helpers for extracting bounded full-text excerpts from downloaded PDFs."""
+
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
-
 LOGGER = logging.getLogger(__name__)
 
 
 class FullTextExtractor:
+    """Read PDFs and return a truncated text excerpt for screening."""
+
     def __init__(self, max_chars: int = 12000) -> None:
         self.max_chars = max_chars
 
     def extract_excerpt(self, pdf_path: str | Path | None) -> str | None:
+        """Extract text up to the configured character budget from a local PDF file."""
+
         if not pdf_path:
             return None
         try:

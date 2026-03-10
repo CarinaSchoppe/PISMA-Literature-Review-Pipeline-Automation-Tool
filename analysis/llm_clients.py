@@ -1,25 +1,30 @@
+"""Adapters for hosted and local LLM backends used by the screening layer."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
 import importlib.util
 import logging
+from dataclasses import dataclass
 from typing import Any
 
 from config import ResearchConfig
 from utils.http import RateLimiter, build_session, request_json
-
 
 LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
 class LLMResponse:
+    """Minimal normalized response returned by any configured LLM adapter."""
+
     content: str | None
     enabled: bool
     provider_name: str
 
 
 class BaseLLMClient:
+    """Fallback LLM client used when screening should stay heuristic only."""
+
     enabled = False
     provider_name = "heuristic"
 
@@ -28,6 +33,8 @@ class BaseLLMClient:
 
 
 class OpenAICompatibleLLMClient(BaseLLMClient):
+    """Client for OpenAI-compatible chat-completions endpoints, including Ollama."""
+
     def __init__(
         self,
         *,
@@ -54,6 +61,8 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
         self.limiter = RateLimiter(calls_per_second=1.0)
 
     def chat(self, *, system_prompt: str, user_prompt: str) -> LLMResponse:
+        """Submit a chat completion request and normalize the first assistant message."""
+
         payload = request_json(
             self.session,
             "POST",
@@ -82,6 +91,8 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
 
 
 def load_transformers_runtime() -> tuple[Any, Any]:
+    """Import the optional local Hugging Face runtime on demand."""
+
     try:
         import torch
         from transformers import pipeline
@@ -93,6 +104,8 @@ def load_transformers_runtime() -> tuple[Any, Any]:
 
 
 class HuggingFaceLocalLLMClient(BaseLLMClient):
+    """Local text-generation client backed by `transformers.pipeline`."""
+
     def __init__(
         self,
         *,
@@ -140,6 +153,8 @@ class HuggingFaceLocalLLMClient(BaseLLMClient):
             LOGGER.warning("Could not initialize local Hugging Face model '%s': %s", model_id, exc)
 
     def chat(self, *, system_prompt: str, user_prompt: str) -> LLMResponse:
+        """Generate a response from a local model using chat-style messages."""
+
         if not self.enabled or self._generator is None:
             return LLMResponse(content=None, enabled=False, provider_name=self.provider_name)
         messages = [
@@ -167,6 +182,8 @@ class HuggingFaceLocalLLMClient(BaseLLMClient):
             return LLMResponse(content=None, enabled=True, provider_name=self.provider_name)
 
     def _resolve_dtype(self, torch: Any, dtype_name: str) -> Any | None:
+        """Map a config string like `float16` to a torch dtype object when possible."""
+
         normalized = (dtype_name or "auto").strip().lower()
         if normalized == "auto":
             return "auto"
@@ -174,9 +191,13 @@ class HuggingFaceLocalLLMClient(BaseLLMClient):
         return getattr(torch, attr_name, None)
 
     def _accelerate_available(self) -> bool:
+        """Detect whether `accelerate` is available for automatic device placement."""
+
         return importlib.util.find_spec("accelerate") is not None
 
     def _extract_generated_content(self, output: Any) -> str | None:
+        """Normalize different pipeline output shapes into one plain text response."""
+
         if not output:
             return None
         first_item = output[0] if isinstance(output, list) else output
@@ -192,6 +213,8 @@ class HuggingFaceLocalLLMClient(BaseLLMClient):
 
 
 def build_llm_client(config: ResearchConfig) -> BaseLLMClient:
+    """Select and instantiate the concrete LLM adapter for the active configuration."""
+
     provider = config.llm_provider
     settings = config.api_settings
 

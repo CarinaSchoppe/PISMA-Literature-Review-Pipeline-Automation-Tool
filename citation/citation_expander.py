@@ -1,15 +1,19 @@
+"""Backward and forward citation expansion over the seeded paper set."""
+
 from __future__ import annotations
 
+from models.paper import PaperMetadata
 from tqdm import tqdm
 
 from config import ResearchConfig
 from database import DatabaseManager
 from discovery.protocols import CitationProviderProtocol
-from models.paper import PaperMetadata
 from utils.deduplication import deduplicate_papers
 
 
 class CitationExpander:
+    """Expand the current review set through reference and citation lookups."""
+
     def __init__(
         self,
         config: ResearchConfig,
@@ -21,6 +25,8 @@ class CitationExpander:
         self.citation_provider = citation_provider
 
     def expand(self, papers: list[PaperMetadata]) -> list[PaperMetadata]:
+        """Return newly discovered papers found through backward and forward snowballing."""
+
         if not self.config.citation_snowballing_enabled:
             return []
 

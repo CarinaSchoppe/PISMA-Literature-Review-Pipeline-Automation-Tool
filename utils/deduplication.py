@@ -1,11 +1,12 @@
+"""Deduplication helpers for merging overlapping records across discovery sources."""
+
 from __future__ import annotations
 
 from typing import Iterable
 
+from models.paper import PaperMetadata
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-
-from models.paper import PaperMetadata
 
 
 def deduplicate_papers(
@@ -13,6 +14,8 @@ def deduplicate_papers(
     *,
     title_similarity_threshold: float = 0.92,
 ) -> list[PaperMetadata]:
+    """Merge papers that share a DOI or exceed the configured title similarity threshold."""
+
     unique_by_identity: dict[str, PaperMetadata] = {}
     title_only: list[PaperMetadata] = []
 
@@ -29,6 +32,7 @@ def deduplicate_papers(
         return list(unique_by_identity.values())
 
     texts = [paper.normalized_title for paper in title_only]
+    # Character n-grams work reasonably well here because titles are short and noisy across sources.
     vectorizer = TfidfVectorizer(analyzer="char_wb", ngram_range=(3, 5))
     matrix = vectorizer.fit_transform(texts)
     similarities = cosine_similarity(matrix)

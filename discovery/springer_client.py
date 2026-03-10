@@ -1,3 +1,5 @@
+"""Springer Nature metadata API client for optional discovery expansion."""
+
 from __future__ import annotations
 
 import logging
@@ -13,6 +15,8 @@ LOGGER = logging.getLogger(__name__)
 
 
 class SpringerClient:
+    """Search the Springer metadata API and normalize the returned records."""
+
     BASE_URL = "https://api.springernature.com/meta/v2/json"
 
     def __init__(self, config: ResearchConfig) -> None:
@@ -21,6 +25,8 @@ class SpringerClient:
         self.limiter = RateLimiter(calls_per_second=1.0)
 
     def search(self) -> list[PaperMetadata]:
+        """Search Springer records when an API key is configured."""
+
         api_key = self.config.api_settings.springer_api_key
         if not api_key:
             LOGGER.warning("Springer discovery was enabled but SPRINGER_API_KEY is not configured.")
@@ -60,6 +66,8 @@ class SpringerClient:
         return papers[: self.config.per_source_limit]
 
     def _parse_record(self, payload: dict[str, Any]) -> PaperMetadata:
+        """Convert one Springer metadata record into the shared paper model."""
+
         creators = payload.get("creators") or []
         authors: list[str] = []
         for creator in creators:

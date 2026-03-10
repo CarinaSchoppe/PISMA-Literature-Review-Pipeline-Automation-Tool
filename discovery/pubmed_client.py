@@ -1,3 +1,5 @@
+"""PubMed discovery client built on the NCBI E-utilities API."""
+
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
@@ -10,6 +12,8 @@ from utils.text_processing import chunked, normalize_text, safe_year
 
 
 class PubMedClient:
+    """Search PubMed for biomedical queries and normalize fetched XML records."""
+
     SEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
     FETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
 
@@ -19,6 +23,8 @@ class PubMedClient:
         self.limiter = RateLimiter(calls_per_second=3.0)
 
     def search(self) -> list[PaperMetadata]:
+        """Search PubMed when the run configuration enables the biomedical source."""
+
         if not self.config.include_pubmed:
             return []
         papers: list[PaperMetadata] = []
@@ -58,6 +64,8 @@ class PubMedClient:
         return papers[: self.config.per_source_limit]
 
     def _fetch_batch(self, pmids: list[str]) -> list[PaperMetadata]:
+        """Fetch a batch of PubMed XML records for a list of PMIDs."""
+
         self.limiter.wait()
         response = self.session.get(
             self.FETCH_URL,
@@ -78,6 +86,8 @@ class PubMedClient:
         return papers
 
     def _parse_article(self, article: ET.Element) -> PaperMetadata | None:
+        """Convert one PubMed XML article into the shared paper model."""
+
         citation = article.find("./MedlineCitation")
         if citation is None:
             return None

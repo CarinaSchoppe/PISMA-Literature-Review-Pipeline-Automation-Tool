@@ -1,3 +1,5 @@
+"""PDF lookup and download helpers built around Unpaywall and direct OA links."""
+
 from __future__ import annotations
 
 import logging
@@ -13,6 +15,8 @@ LOGGER = logging.getLogger(__name__)
 
 
 class PDFFetcher:
+    """Resolve open-access PDF URLs and optionally download them to disk."""
+
     BASE_URL = "https://api.unpaywall.org/v2"
 
     def __init__(self, config: ResearchConfig) -> None:
@@ -27,6 +31,8 @@ class PDFFetcher:
             download: bool | None = None,
             target_dir: Path | None = None,
     ) -> PaperMetadata:
+        """Enrich one paper with PDF metadata and an optional downloaded file path."""
+
         pdf_link = paper.pdf_link
         open_access = paper.open_access
 
@@ -58,6 +64,8 @@ class PDFFetcher:
         )
 
     def download_pdf(self, paper: PaperMetadata, url: str, *, target_dir: Path | None = None) -> str | None:
+        """Download a PDF if the response looks like a valid PDF stream."""
+
         filename_root = paper.doi or paper.title
         filename = f"{slugify_filename(filename_root)}.pdf"
         target = (target_dir or Path(self.config.papers_dir)) / filename
@@ -78,6 +86,7 @@ class PDFFetcher:
 
         content_type = response.headers.get("Content-Type", "").lower()
         preview = b""
+        # Some providers mislabel PDFs, so inspect the file header before writing HTML to disk.
         if "pdf" not in content_type and "octet-stream" not in content_type:
             preview = next(response.iter_content(chunk_size=4), b"")
             if preview != b"%PDF":

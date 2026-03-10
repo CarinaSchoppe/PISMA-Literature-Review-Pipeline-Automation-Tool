@@ -1,3 +1,5 @@
+"""Integration tests that exercise the pipeline end to end on offline fixtures."""
+
 from __future__ import annotations
 
 import json
@@ -15,6 +17,8 @@ from pipeline.pipeline_controller import PipelineController
 
 
 class PipelineIntegrationTests(unittest.TestCase):
+    """Verify output generation, collection mode, screening, and discovery limits."""
+
     def test_offline_fixture_pipeline_generates_outputs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

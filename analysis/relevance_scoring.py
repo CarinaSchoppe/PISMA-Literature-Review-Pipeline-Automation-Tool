@@ -1,3 +1,5 @@
+"""Heuristic relevance scoring used for screening and non-LLM fallback operation."""
+
 from __future__ import annotations
 
 import math
@@ -37,16 +39,22 @@ THEORY_TERMS = {
 
 
 class RelevanceScorer:
+    """Score papers against the review brief using transparent heuristic criteria."""
+
     def __init__(self, config: ResearchConfig) -> None:
         self.config = config
 
     def has_hard_exclusion(self, paper: PaperMetadata) -> bool:
+        """Return whether banned themes or excluded title markers force rejection."""
+
         combined_text = f"{paper.title}. {paper.abstract}"
         return bool(self._matched_terms(combined_text, self.config.banned_topics)) or bool(
             self._matched_terms(paper.title, self.config.excluded_title_terms)
         )
 
     def quick_screen(self, paper: PaperMetadata) -> str:
+        """Return a fast include/maybe/exclude triage decision from lightweight signals."""
+
         combined_text = f"{paper.title}. {paper.abstract}"
         topic_keywords = [
             self.config.research_topic,
@@ -68,6 +76,8 @@ class RelevanceScorer:
         return "exclude"
 
     def deep_score(self, paper: PaperMetadata, stage_one_decision: str | None = None) -> ScreeningResult:
+        """Compute the final relevance score, explanation, and structured decision payload."""
+
         combined_text = normalize_title(f"{paper.title}. {paper.abstract}")
         methodology_category = self._classify_methodology(combined_text)
         domain_category = self._classify_domain(combined_text)
@@ -198,6 +208,8 @@ class RelevanceScorer:
             matched_banned: bool = False,
             matched_excluded_title_terms: bool = False,
     ) -> str:
+        """Translate score and gating signals into the configured decision mode."""
+
         if matched_banned or matched_excluded_title_terms:
             return "exclude"
         if self.config.decision_mode == "strict":

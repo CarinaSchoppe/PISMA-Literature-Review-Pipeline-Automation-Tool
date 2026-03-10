@@ -1,3 +1,5 @@
+"""Semantic Scholar discovery client used for metadata recall and ranking signals."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -9,6 +11,8 @@ from utils.http import RateLimiter, build_session, request_json
 
 
 class SemanticScholarClient:
+    """Search Semantic Scholar and normalize the returned paper metadata."""
+
     BASE_URL = "https://api.semanticscholar.org/graph/v1/paper/search"
     SEARCH_FIELDS = ",".join(
         [
@@ -36,6 +40,8 @@ class SemanticScholarClient:
         self.limiter = RateLimiter(calls_per_second=3.0)
 
     def search(self) -> list[PaperMetadata]:
+        """Search Semantic Scholar across configured query variants."""
+
         papers: list[PaperMetadata] = []
         limit = self.config.results_per_page
         for query in self.config.discovery_queries:
@@ -66,6 +72,8 @@ class SemanticScholarClient:
         return papers[: self.config.per_source_limit]
 
     def _parse_paper(self, payload: dict[str, Any]) -> PaperMetadata:
+        """Convert one Semantic Scholar result into the shared paper model."""
+
         external_ids = {str(key).lower(): str(value) for key, value in (payload.get("externalIds") or {}).items() if value}
         pdf_info = payload.get("openAccessPdf") or {}
         doi = external_ids.get("doi")

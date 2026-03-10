@@ -1,3 +1,5 @@
+"""Crossref discovery client for DOI-rich bibliographic metadata."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -10,6 +12,8 @@ from utils.text_processing import safe_year, strip_markup
 
 
 class CrossrefClient:
+    """Search Crossref works and normalize them into the pipeline model."""
+
     BASE_URL = "https://api.crossref.org/works"
 
     def __init__(self, config: ResearchConfig) -> None:
@@ -18,6 +22,8 @@ class CrossrefClient:
         self.limiter = RateLimiter(calls_per_second=2.5)
 
     def search(self) -> list[PaperMetadata]:
+        """Search Crossref across configured query variants and page windows."""
+
         papers: list[PaperMetadata] = []
         rows = self.config.results_per_page
         for query in self.config.discovery_queries:
@@ -53,6 +59,8 @@ class CrossrefClient:
         return papers[: self.config.per_source_limit]
 
     def _parse_item(self, payload: dict[str, Any]) -> PaperMetadata:
+        """Convert one Crossref work item into the shared paper representation."""
+
         authors = []
         for author in payload.get("author", []) or []:
             parts = [author.get("given", ""), author.get("family", "")]

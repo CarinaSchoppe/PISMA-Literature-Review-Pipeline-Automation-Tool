@@ -1,3 +1,5 @@
+"""OpenAlex discovery and citation lookups for scholarly works metadata."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -10,6 +12,8 @@ from utils.text_processing import reconstruct_inverted_abstract
 
 
 class OpenAlexClient:
+    """Search OpenAlex and resolve references or citing papers for known works."""
+
     BASE_URL = "https://api.openalex.org/works"
 
     def __init__(self, config: ResearchConfig) -> None:
@@ -18,6 +22,8 @@ class OpenAlexClient:
         self.limiter = RateLimiter(calls_per_second=5.0)
 
     def search(self) -> list[PaperMetadata]:
+        """Search OpenAlex across configured query variants and pagination windows."""
+
         papers: list[PaperMetadata] = []
         for query in self.config.discovery_queries:
             for page in range(1, self.config.pages_to_retrieve + 1):
@@ -51,6 +57,8 @@ class OpenAlexClient:
         return papers[: self.config.per_source_limit]
 
     def fetch_work_by_id(self, work_id: str) -> PaperMetadata | None:
+        """Fetch one OpenAlex work by its identifier."""
+
         normalized_id = work_id.rstrip("/").split("/")[-1]
         payload = request_json(
             self.session,
@@ -67,6 +75,8 @@ class OpenAlexClient:
         return self._parse_work(payload)
 
     def resolve_work(self, paper: PaperMetadata) -> PaperMetadata | None:
+        """Resolve a paper to the closest OpenAlex work for citation expansion."""
+
         openalex_id = paper.external_ids.get("openalex")
         if openalex_id:
             return self.fetch_work_by_id(openalex_id)
@@ -93,6 +103,8 @@ class OpenAlexClient:
         return None
 
     def fetch_references(self, paper: PaperMetadata, limit: int = 20) -> list[PaperMetadata]:
+        """Fetch referenced works for a resolved OpenAlex record."""
+
         resolved = self.resolve_work(paper)
         if not resolved:
             return []
@@ -104,6 +116,8 @@ class OpenAlexClient:
         return references
 
     def fetch_citations(self, paper: PaperMetadata, limit: int = 20) -> list[PaperMetadata]:
+        """Fetch works that cite the resolved OpenAlex paper."""
+
         resolved = self.resolve_work(paper)
         openalex_id = resolved.external_ids.get("openalex") if resolved else None
         if not openalex_id:
@@ -126,6 +140,8 @@ class OpenAlexClient:
         return [self._parse_work(item) for item in payload.get("results", [])[:limit] if item.get("display_name")]
 
     def _parse_work(self, payload: dict[str, Any]) -> PaperMetadata:
+        """Convert an OpenAlex work payload into the shared paper model."""
+
         authors = [
             authorship.get("author", {}).get("display_name", "").strip()
             for authorship in payload.get("authorships", [])

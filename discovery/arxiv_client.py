@@ -1,3 +1,5 @@
+"""arXiv API client for preprint discovery through the public Atom feed."""
+
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
@@ -12,6 +14,8 @@ ATOM_NS = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/sch
 
 
 class ArxivClient:
+    """Search arXiv and normalize Atom feed entries into paper metadata."""
+
     BASE_URL = "https://export.arxiv.org/api/query"
 
     def __init__(self, config: ResearchConfig) -> None:
@@ -23,6 +27,8 @@ class ArxivClient:
         self.limiter = RateLimiter(calls_per_second=0.34)
 
     def search(self) -> list[PaperMetadata]:
+        """Search arXiv across query variants and configured pagination windows."""
+
         papers: list[PaperMetadata] = []
         rows = self.config.results_per_page
         for query in self.config.discovery_queries:
@@ -61,6 +67,8 @@ class ArxivClient:
         return papers[: self.config.per_source_limit]
 
     def _build_search_query(self, query: str) -> str:
+        """Convert the configured textual query into arXiv's Atom search syntax."""
+
         terms = [query]
         operator = (self.config.boolean_operators or "AND").strip().upper()
         if operator not in {"AND", "OR", "NOT"}:
@@ -74,6 +82,8 @@ class ArxivClient:
         return f" {operator} ".join(query_terms) if query_terms else f'all:"{query}"'
 
     def _parse_feed(self, payload: str) -> list[PaperMetadata]:
+        """Parse the Atom feed response into normalized paper models."""
+
         root = ET.fromstring(payload)
         papers: list[PaperMetadata] = []
         for entry in root.findall("atom:entry", ATOM_NS):
@@ -83,6 +93,8 @@ class ArxivClient:
         return papers
 
     def _parse_entry(self, entry: ET.Element) -> PaperMetadata | None:
+        """Convert one arXiv Atom entry into the shared paper model."""
+
         title = normalize_text(entry.findtext("atom:title", default="", namespaces=ATOM_NS))
         if not title:
             return None

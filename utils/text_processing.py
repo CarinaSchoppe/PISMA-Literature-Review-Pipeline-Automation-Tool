@@ -1,10 +1,11 @@
+"""Shared text normalization, hashing, and lightweight NLP helpers."""
+
 from __future__ import annotations
 
 import hashlib
 import re
 from pathlib import Path
 from typing import Iterable, Iterator, Sequence
-
 
 WHITESPACE_RE = re.compile(r"\s+")
 TAG_RE = re.compile(r"<[^>]+>")
@@ -31,6 +32,8 @@ STOPWORDS = {
 
 
 def canonical_doi(value: str) -> str:
+    """Normalize DOI strings by removing common URL and prefix wrappers."""
+
     cleaned = value.strip().lower()
     cleaned = cleaned.replace("https://doi.org/", "").replace("http://doi.org/", "")
     cleaned = cleaned.replace("doi:", "").strip()
@@ -38,20 +41,28 @@ def canonical_doi(value: str) -> str:
 
 
 def normalize_text(value: str) -> str:
+    """Collapse repeated whitespace while preserving the original casing."""
+
     return WHITESPACE_RE.sub(" ", str(value or "")).strip()
 
 
 def normalize_title(value: str) -> str:
+    """Normalize text aggressively for matching and deduplication purposes."""
+
     cleaned = normalize_text(value).lower()
     return NON_ALNUM_RE.sub(" ", cleaned).strip()
 
 
 def strip_markup(value: str) -> str:
+    """Remove lightweight HTML or XML tags from metadata fields."""
+
     text = TAG_RE.sub(" ", str(value or ""))
     return normalize_text(text)
 
 
 def reconstruct_inverted_abstract(index: dict[str, list[int]] | None) -> str:
+    """Reconstruct an OpenAlex-style inverted abstract index into plain text."""
+
     if not index:
         return ""
     size = 1 + max(position for positions in index.values() for position in positions)
@@ -63,6 +74,8 @@ def reconstruct_inverted_abstract(index: dict[str, list[int]] | None) -> str:
 
 
 def build_query(topic: str, keywords: Sequence[str], boolean_expression: str | None = None) -> str:
+    """Assemble a human-readable source query from topic, keywords, and boolean hints."""
+
     cleaned_keywords = [keyword.strip() for keyword in keywords if keyword.strip()]
     if boolean_expression:
         operator = boolean_expression.strip().upper()
@@ -75,6 +88,8 @@ def build_query(topic: str, keywords: Sequence[str], boolean_expression: str | N
 
 
 def keyword_overlap_score(text: str, keywords: Sequence[str]) -> float:
+    """Return the fraction of review keywords that appear in the provided text."""
+
     normalized = normalize_title(text)
     if not normalized or not keywords:
         return 0.0
@@ -88,6 +103,8 @@ def keyword_overlap_score(text: str, keywords: Sequence[str]) -> float:
 
 
 def extract_salient_sentence(text: str, keywords: Sequence[str]) -> str:
+    """Select the sentence with the strongest keyword overlap for reporting."""
+
     sentences = re.split(r"(?<=[.!?])\s+", normalize_text(text))
     if not sentences:
         return ""
@@ -103,6 +120,8 @@ def extract_salient_sentence(text: str, keywords: Sequence[str]) -> str:
 
 
 def safe_year(value: object) -> int | None:
+    """Parse a plausible publication year or return `None` for noisy input."""
+
     if value is None or value == "":
         return None
     try:
@@ -115,20 +134,28 @@ def safe_year(value: object) -> int | None:
 
 
 def chunked(values: Sequence[str], size: int) -> Iterator[list[str]]:
+    """Yield fixed-size chunks from a sequence."""
+
     for index in range(0, len(values), size):
         yield list(values[index : index + size])
 
 
 def make_query_key(topic: str, keywords: Sequence[str], year_start: int, year_end: int) -> str:
+    """Create a stable short identifier for one discovery query context."""
+
     payload = f"{normalize_title(topic)}|{','.join(sorted(normalize_title(item) for item in keywords))}|{year_start}|{year_end}"
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def stable_hash(value: str, length: int = 16) -> str:
+    """Hash normalized text deterministically and truncate it to the requested length."""
+
     return hashlib.sha1(normalize_text(value).encode("utf-8")).hexdigest()[:length]
 
 
 def slugify_filename(value: str, max_length: int = 100) -> str:
+    """Convert arbitrary text into a filesystem-friendly filename stem."""
+
     normalized = NON_ALNUM_RE.sub("-", normalize_title(value)).strip("-")
     if not normalized:
         normalized = "paper"
@@ -136,10 +163,14 @@ def slugify_filename(value: str, max_length: int = 100) -> str:
 
 
 def ensure_parent_directory(path: Path) -> None:
+    """Create the parent directory for a target file path if it does not exist yet."""
+
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
 def top_terms(texts: Iterable[str], limit: int = 10) -> list[str]:
+    """Return the most frequent non-trivial normalized terms across multiple texts."""
+
     counts: dict[str, int] = {}
     for text in texts:
         for token in normalize_title(text).split():

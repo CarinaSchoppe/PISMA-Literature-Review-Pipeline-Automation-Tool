@@ -1,3 +1,5 @@
+"""HTTP session, retry, throttling, and safe request-logging utilities."""
+
 from __future__ import annotations
 
 import logging
@@ -23,6 +25,8 @@ def configure_http_logging(*, enabled: bool, log_payloads: bool) -> None:
 
 
 def _sanitize_for_log(value: Any) -> Any:
+    """Redact secrets and truncate oversized values before they reach logs."""
+
     if isinstance(value, dict):
         sanitized: dict[str, Any] = {}
         for key, item in value.items():
@@ -40,12 +44,16 @@ def _sanitize_for_log(value: Any) -> Any:
 
 
 class RateLimiter:
+    """Simple per-process rate limiter shared by API clients."""
+
     def __init__(self, calls_per_second: float = 1.0) -> None:
         self.min_interval = 1.0 / calls_per_second if calls_per_second > 0 else 0.0
         self._lock = Lock()
         self._last_call = 0.0
 
     def wait(self) -> None:
+        """Sleep just long enough to respect the configured minimum call interval."""
+
         if self.min_interval <= 0:
             return
         with self._lock:
@@ -57,6 +65,8 @@ class RateLimiter:
 
 
 def build_session(user_agent: str, extra_headers: dict[str, str] | None = None) -> requests.Session:
+    """Create a resilient HTTP session with retries and a consistent user agent."""
+
     session = requests.Session()
     retry = Retry(
         total=3,
@@ -82,6 +92,8 @@ def request_json(
     timeout: int = 30,
     **kwargs: Any,
 ) -> Any:
+    """Perform an HTTP request and parse the response body as JSON when successful."""
+
     if limiter:
         limiter.wait()
     if HTTP_LOG_ENABLED:
@@ -118,6 +130,8 @@ def request_content(
     stream: bool = False,
     **kwargs: Any,
 ) -> requests.Response | None:
+    """Perform an HTTP GET request intended for binary content such as PDFs."""
+
     if limiter:
         limiter.wait()
     if HTTP_LOG_ENABLED:
@@ -142,6 +156,8 @@ def request_text(
     timeout: int = 30,
     **kwargs: Any,
 ) -> str | None:
+    """Perform an HTTP request and return the raw text body on success."""
+
     if limiter:
         limiter.wait()
     if HTTP_LOG_ENABLED:

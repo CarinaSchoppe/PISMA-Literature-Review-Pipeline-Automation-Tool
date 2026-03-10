@@ -1,14 +1,18 @@
+"""Unit tests for source-specific metadata parsing logic."""
+
 from __future__ import annotations
 
 import unittest
 import xml.etree.ElementTree as ET
 
 from config import ResearchConfig
-from discovery.arxiv_client import ATOM_NS, ArxivClient
+from discovery.arxiv_client import ArxivClient
 from discovery.springer_client import SpringerClient
 
 
 class DiscoveryClientTests(unittest.TestCase):
+    """Validate that representative API payloads normalize into the shared paper model."""
+
     def test_arxiv_client_parses_atom_entry(self) -> None:
         config = ResearchConfig(
             research_topic="Evidence discovery",

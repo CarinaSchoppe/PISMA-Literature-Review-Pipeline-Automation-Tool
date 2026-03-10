@@ -1,3 +1,5 @@
+"""Tests for the mapping between the guided UI form and the runtime config model."""
+
 from __future__ import annotations
 
 import tempfile
@@ -15,6 +17,8 @@ from ui.view_model import (
 
 
 class UIViewModelTests(unittest.TestCase):
+    """Verify UI defaults, profile persistence, and config round-tripping."""
+
     def test_form_values_round_trip_into_research_config(self) -> None:
         values = default_form_values()
         values.update(

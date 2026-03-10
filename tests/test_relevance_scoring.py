@@ -1,3 +1,5 @@
+"""Tests for heuristic relevance scoring and hard-exclusion rules."""
+
 from __future__ import annotations
 
 import unittest
@@ -9,6 +11,8 @@ from config import ResearchConfig
 
 
 class RelevanceScoringTests(unittest.TestCase):
+    """Verify excluded-title handling and ordinary LLM survey scoring behavior."""
+
     def test_correction_titles_are_excluded_by_default(self) -> None:
         config = ResearchConfig(
             research_topic="Large language models",
