@@ -5,9 +5,11 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 
+from acquisition.pdf_fetcher import PDFFetcher
 from config import ResearchConfig
 from pipeline.pipeline_controller import PipelineController
 
@@ -74,6 +76,7 @@ class PipelineIntegrationTests(unittest.TestCase):
             self.assertIn("Literature Review Summary", summary)
             self.assertIn("retain_reason", included.columns)
             self.assertIn("exclusion_reason", excluded.columns)
+            self.assertIn("matched_excluded_title_terms", papers.columns)
 
             connection = sqlite3.connect(root / "results" / "excluded_papers.db")
             try:
@@ -230,3 +233,65 @@ class PipelineIntegrationTests(unittest.TestCase):
             papers = pd.read_csv(root / "results" / "papers.csv")
             self.assertIn("google_scholar_import", set(papers["source"]))
             self.assertIn("researchgate_import", set(papers["source"]))
+
+    def test_relevant_pdf_downloads_can_be_routed_to_configured_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            relevant_dir = root / "relevant_keep"
+            calls: list[tuple[str, bool | None, str]] = []
+
+            def fake_fetch(
+                    self: PDFFetcher,
+                    paper,
+                    *,
+                    download: bool | None = None,
+                    target_dir: Path | None = None,
+            ):
+                calls.append((paper.title, download, str(target_dir or "")))
+                pdf_path = paper.pdf_path
+                if download:
+                    pdf_path = str((target_dir or root / "papers") / f"{paper.database_id or 0}.pdf")
+                return paper.model_copy(
+                    update={
+                        "pdf_link": paper.pdf_link or "https://example.org/fake.pdf",
+                        "pdf_path": pdf_path,
+                        "open_access": True,
+                    }
+                )
+
+            config = ResearchConfig(
+                research_topic="AI-assisted literature reviews",
+                search_keywords=["large language models", "screening", "systematic review"],
+                pages_to_retrieve=1,
+                results_per_page=10,
+                year_range_start=2020,
+                year_range_end=2026,
+                max_papers_to_analyze=5,
+                citation_snowballing_enabled=True,
+                relevance_threshold=50,
+                download_pdfs=True,
+                pdf_download_mode="relevant_only",
+                openalex_enabled=False,
+                semantic_scholar_enabled=False,
+                crossref_enabled=False,
+                include_pubmed=False,
+                max_workers=2,
+                request_timeout_seconds=10,
+                resume_mode=True,
+                disable_progress_bars=True,
+                fixture_data_path=Path("tests/fixtures/offline_papers.json"),
+                data_dir=root / "data",
+                papers_dir=root / "papers",
+                relevant_pdfs_dir=relevant_dir,
+                results_dir=root / "results",
+                database_path=root / "data" / "literature_review.db",
+            ).finalize()
+
+            with patch.object(PDFFetcher, "fetch_for_paper", new=fake_fetch):
+                PipelineController(config).run()
+
+            included = pd.read_csv(root / "results" / "included_papers.csv")
+            self.assertTrue(any(download is False for _, download, _ in calls))
+            self.assertTrue(any(download is True and path == str(relevant_dir) for _, download, path in calls))
+            self.assertFalse(included.empty)
+            self.assertTrue(included["pdf_path"].dropna().str.contains("relevant_keep").all())

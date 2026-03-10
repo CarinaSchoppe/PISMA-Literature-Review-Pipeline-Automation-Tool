@@ -77,6 +77,7 @@ project_root/
 - Backward and forward citation snowballing
 - Dedicated manual-import entrypoints for Google Scholar and ResearchGate exports
 - Unpaywall-powered OA enrichment and PDF download
+- Configurable PDF download routing for all papers or only threshold-passing relevant papers
 - Optional full-text PDF extraction with `pypdf`
 - `collect` mode for metadata-only runs without screening
 - configurable logging verbosity: `quiet`, `normal`, `verbose`, `debug`
@@ -165,6 +166,8 @@ py -3 main.py `
   --verbosity verbose `
   --citation-snowballing `
   --download-pdfs `
+  --pdf-download-mode relevant_only `
+  --relevant-pdfs-dir papers\relevant_keep `
   --include-pubmed `
   --threshold 72
 ```
@@ -279,6 +282,8 @@ After a run, the pipeline writes:
 - `results/run_config.json`
 - PDFs into `papers/` when download is enabled and OA copies exist
 
+If `--pdf-download-mode relevant_only` is active, PDFs for threshold-passing relevant papers are written into the configured relevant-PDF directory instead.
+
 ## Testing
 
 Fast local test suite:
@@ -317,6 +322,9 @@ That smoke test avoids external APIs and writes into:
 - `--fixture-data`: bypass live APIs and use local fixture records
 - `--manual-source-path`: import CSV or JSON metadata exports from other systems
 - `--data-dir`, `--papers-dir`, `--results-dir`, `--database-path`: relocate state and output paths from the CLI
+- `--download-pdfs`: enable PDF download when OA PDFs are available
+- `--pdf-download-mode`: choose `all` or `relevant_only`
+- `--relevant-pdfs-dir`: target folder for relevant PDFs when `pdf-download-mode` is `relevant_only`
 - `--llm-provider`: select `heuristic`, `openai_compatible`, `ollama`, or `huggingface_local`
 - `--openai-model`, `--ollama-model`, `--huggingface-model`: select the actual model backend
 - `--huggingface-task`, `--huggingface-device`, `--huggingface-dtype`, `--huggingface-max-new-tokens`, `--huggingface-cache-dir`: tune local HF inference
@@ -374,6 +382,25 @@ And also the screening rationale:
 - matched banned topics
 
 The main SQLite database also stores a screening cache so the same paper is not re-analyzed for the same screening context unless the context changes.
+
+## Relevant PDF Handling
+
+The pipeline separates PDF metadata enrichment from actual file download:
+
+- metadata enrichment can happen early for all discovered records
+- file download can happen for all papers or only after relevance screening
+
+If you want only retained papers on disk, use:
+
+```powershell
+py -3 main.py `
+  --config-file tests\fixtures\offline_config.json `
+  --download-pdfs `
+  --pdf-download-mode relevant_only `
+  --relevant-pdfs-dir papers\relevant_keep
+```
+
+In that mode, only papers whose final score meets the active threshold and are not excluded are downloaded into the configured folder.
 
 ## Manual Source Imports
 

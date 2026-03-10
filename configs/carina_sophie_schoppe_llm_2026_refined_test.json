@@ -1,0 +1,57 @@
+{
+  "research_topic": "Large language models and artificial intelligence: surveys, benchmarks, evaluation and deployment trends",
+  "research_question": "What does the academic literature from 2023 to 2026 indicate about the current development state of AI and large language models for a systematic briefing prepared for Carina Sophie Schoppe?",
+  "review_objective": "Produce a focused evidence briefing for Carina Sophie Schoppe on the 2026 state of AI and LLMs, prioritizing surveys, benchmarks, evaluations, deployment reports, and review papers.",
+  "inclusion_criteria": [
+    "focuses on artificial intelligence or large language models",
+    "published between 2023 and 2026",
+    "contains survey, review, benchmark, evaluation, methods analysis, or deployment discussion"
+  ],
+  "exclusion_criteria": [
+    "general methodology paper without AI or LLM focus",
+    "domain-specific application with no broader AI or LLM contribution",
+    "unrelated agriculture or irrigation topic"
+  ],
+  "banned_topics": [
+    "crop irrigation",
+    "plant growth"
+  ],
+  "search_keywords": [
+    "large language models",
+    "survey",
+    "benchmark",
+    "evaluation",
+    "review",
+    "deployment"
+  ],
+  "boolean_operators": "AND",
+  "pages_to_retrieve": 1,
+  "results_per_page": 5,
+  "year_range_start": 2023,
+  "year_range_end": 2026,
+  "max_papers_to_analyze": 10,
+  "citation_snowballing_enabled": false,
+  "relevance_threshold": 45,
+  "download_pdfs": false,
+  "pdf_download_mode": "relevant_only",
+  "analyze_full_text": false,
+  "llm_provider": "heuristic",
+  "decision_mode": "triage",
+  "maybe_threshold_margin": 10,
+  "openalex_enabled": true,
+  "semantic_scholar_enabled": true,
+  "crossref_enabled": true,
+  "springer_enabled": false,
+  "arxiv_enabled": false,
+  "include_pubmed": false,
+  "max_workers": 3,
+  "request_timeout_seconds": 30,
+  "resume_mode": true,
+  "disable_progress_bars": true,
+  "title_similarity_threshold": 0.9,
+  "data_dir": "data/carina_llm_2026_refined",
+  "papers_dir": "papers/carina_llm_2026_refined",
+  "relevant_pdfs_dir": "papers/carina_llm_2026_refined/relevant",
+  "results_dir": "results/carina_llm_2026_refined",
+  "database_path": "data/carina_llm_2026_refined/literature_review.db"
+}

@@ -3,8 +3,10 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Any
 
+from models.paper import PaperMetadata, ScreeningResult
 from tqdm import tqdm
 
 from acquisition.full_text_extractor import FullTextExtractor
@@ -22,11 +24,9 @@ from discovery.openalex_client import OpenAlexClient
 from discovery.pubmed_client import PubMedClient
 from discovery.semantic_scholar_client import SemanticScholarClient
 from discovery.springer_client import SpringerClient
-from models.paper import PaperMetadata, ScreeningResult
 from reporting.report_generator import ReportGenerator
 from utils.deduplication import deduplicate_papers
 from utils.text_processing import stable_hash
-
 
 LOGGER = logging.getLogger(__name__)
 
@@ -97,6 +97,12 @@ class PipelineController:
                 screening_stats = {"screened_count": 0, "full_text_screened_count": 0}
             else:
                 screening_stats = self._screen_papers()
+                if self.config.download_pdfs and self.config.pdf_download_mode == "relevant_only":
+                    relevant_pdf_updates = self._download_relevant_pdfs(
+                        self.database.get_papers_for_query(self.config.query_key or "")
+                    )
+                    if relevant_pdf_updates:
+                        self.database.upsert_papers(relevant_pdf_updates, self.config.query_key or "")
             final_papers = self._normalize_papers_for_current_context(
                 self.database.get_papers_for_query(self.config.query_key or "")
             )
@@ -176,22 +182,58 @@ class PipelineController:
     def _enrich_with_pdfs(self, papers: list[PaperMetadata]) -> list[PaperMetadata]:
         enriched: list[PaperMetadata] = []
         self._log_verbose("Checking PDF availability for %s papers.", len(papers))
+        download_now = self.config.download_pdfs and self.config.pdf_download_mode == "all"
         for paper in tqdm(
             papers,
             desc="PDF metadata and downloads",
             unit="paper",
             disable=self.config.disable_progress_bars,
         ):
-            if paper.pdf_path or (paper.pdf_link and not self.config.download_pdfs):
+            if paper.pdf_path or (paper.pdf_link and not download_now):
                 enriched.append(paper)
                 continue
             try:
                 self._log_debug("Fetching PDF metadata for '%s'.", paper.title)
-                enriched.append(self.pdf_fetcher.fetch_for_paper(paper))
+                enriched.append(
+                    self.pdf_fetcher.fetch_for_paper(
+                        paper,
+                        download=download_now,
+                        target_dir=Path(self.config.papers_dir),
+                    )
+                )
             except Exception as exc:  # noqa: BLE001
                 LOGGER.warning("PDF enrichment failed for %s: %s", paper.title, exc)
                 enriched.append(paper)
         return enriched
+
+    def _download_relevant_pdfs(self, papers: list[PaperMetadata]) -> list[PaperMetadata]:
+        relevant_papers = [paper for paper in papers if self._paper_meets_pdf_download_threshold(paper)]
+        if not relevant_papers:
+            return []
+        self._log_verbose(
+            "Downloading PDFs for %s relevant papers into %s.",
+            len(relevant_papers),
+            self.config.relevant_pdfs_dir,
+        )
+        downloaded: list[PaperMetadata] = []
+        for paper in tqdm(
+                relevant_papers,
+                desc="Relevant PDF downloads",
+                unit="paper",
+                disable=self.config.disable_progress_bars,
+        ):
+            try:
+                downloaded.append(
+                    self.pdf_fetcher.fetch_for_paper(
+                        paper,
+                        download=True,
+                        target_dir=Path(self.config.relevant_pdfs_dir or self.config.papers_dir),
+                    )
+                )
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("Relevant PDF download failed for %s: %s", paper.title, exc)
+                downloaded.append(paper)
+        return downloaded
 
     def _screen_papers(self) -> dict[str, int]:
         if not self.config.resolved_analysis_passes:
@@ -396,6 +438,17 @@ class PipelineController:
         if self._requires_local_llm_serial_execution():
             return 1
         return self.config.max_workers
+
+    def _paper_meets_pdf_download_threshold(self, paper: PaperMetadata) -> bool:
+        if paper.relevance_score is None:
+            return False
+        return (paper.relevance_score >= self._final_threshold()) and paper.inclusion_decision != "exclude"
+
+    def _final_threshold(self) -> float:
+        resolved_passes = self.config.resolved_analysis_passes
+        if resolved_passes:
+            return resolved_passes[-1].threshold
+        return self.config.relevance_threshold
 
     def _log_verbose(self, message: str, *args: Any) -> None:
         if self.config.verbosity in {"verbose", "debug"}:

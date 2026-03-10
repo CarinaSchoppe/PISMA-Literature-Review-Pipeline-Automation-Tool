@@ -62,6 +62,8 @@ class ConfigTests(unittest.TestCase):
                 "none",
                 "--banned-topics",
                 "spam",
+                "--excluded-title-terms",
+                "correction;editorial;erratum",
                 "--keywords",
                 "llm,review",
                 "--boolean",
@@ -77,7 +79,9 @@ class ConfigTests(unittest.TestCase):
                 "--citation-snowballing",
                 "--threshold",
                 "70",
-                "--no-download-pdfs",
+                "--download-pdfs",
+                "--pdf-download-mode",
+                "relevant_only",
                 "--no-analyze-full-text",
                 "--springer-enabled",
                 "--arxiv-enabled",
@@ -100,6 +104,8 @@ class ConfigTests(unittest.TestCase):
                 "data/test_cli",
                 "--papers-dir",
                 "papers/test_cli",
+                "--relevant-pdfs-dir",
+                "papers/test_cli/relevant_keep",
                 "--results-dir",
                 "results/test_cli",
                 "--database-path",
@@ -117,6 +123,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.api_settings.ollama_model, "gpt-oss:20b")
         self.assertEqual(config.api_settings.huggingface_model, "openai/gpt-oss-20b")
         self.assertEqual(config.api_settings.huggingface_max_new_tokens, 512)
+        self.assertTrue(config.download_pdfs)
+        self.assertEqual(config.pdf_download_mode, "relevant_only")
+        self.assertEqual(config.excluded_title_terms, ["correction", "editorial", "erratum"])
         self.assertEqual(config.google_scholar_import_path, Path("tests/fixtures/google_scholar_import.json"))
         self.assertEqual(config.researchgate_import_path, Path("tests/fixtures/researchgate_import.csv"))
+        self.assertEqual(config.relevant_pdfs_dir, Path("papers/test_cli/relevant_keep"))
         self.assertEqual(config.results_dir, Path("results/test_cli"))

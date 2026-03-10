@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import math
 
-from config import ResearchConfig
 from models.paper import PaperMetadata, ScreeningResult
-from utils.text_processing import extract_salient_sentence, keyword_overlap_score, normalize_title
 
+from config import ResearchConfig
+from utils.text_processing import extract_salient_sentence, keyword_overlap_score, normalize_title
 
 METHODOLOGY_PATTERNS = {
     "systematic review": ["systematic review", "meta-analysis", "scoping review", "literature review", "prisma"],
@@ -40,6 +40,12 @@ class RelevanceScorer:
     def __init__(self, config: ResearchConfig) -> None:
         self.config = config
 
+    def has_hard_exclusion(self, paper: PaperMetadata) -> bool:
+        combined_text = f"{paper.title}. {paper.abstract}"
+        return bool(self._matched_terms(combined_text, self.config.banned_topics)) or bool(
+            self._matched_terms(paper.title, self.config.excluded_title_terms)
+        )
+
     def quick_screen(self, paper: PaperMetadata) -> str:
         combined_text = f"{paper.title}. {paper.abstract}"
         topic_keywords = [
@@ -53,7 +59,7 @@ class RelevanceScorer:
         exclusion_penalty = keyword_overlap_score(combined_text, self.config.exclusion_criteria) * 0.2
         year_bonus = 0.1 if paper.year and paper.year >= self.config.year_range_start else 0.0
         score = overlap + year_bonus - exclusion_penalty
-        if self._matched_terms(combined_text, self.config.banned_topics):
+        if self.has_hard_exclusion(paper):
             return "exclude"
         if overlap >= 0.55:
             return "include"
@@ -68,6 +74,7 @@ class RelevanceScorer:
         matched_inclusion = self._matched_terms(combined_text, self.config.inclusion_criteria)
         matched_exclusion = self._matched_terms(combined_text, self.config.exclusion_criteria)
         matched_banned = self._matched_terms(combined_text, self.config.banned_topics)
+        matched_excluded_title_terms = self._matched_terms(paper.title, self.config.excluded_title_terms)
         topic_score = keyword_overlap_score(
             combined_text,
             [
@@ -80,6 +87,7 @@ class RelevanceScorer:
         ) * 100
         exclusion_penalty = keyword_overlap_score(combined_text, self.config.exclusion_criteria) * 20
         banned_penalty = 100.0 if matched_banned else 0.0
+        excluded_title_penalty = 100.0 if matched_excluded_title_terms else 0.0
         methodology_score = 90.0 if methodology_category != "unspecified" else 35.0
         theoretical_score = min(100.0, 15.0 * sum(term in combined_text for term in THEORY_TERMS))
         recency_score = self._recency_score(paper.year)
@@ -91,10 +99,15 @@ class RelevanceScorer:
             + 0.15 * theoretical_score
             + 0.10 * recency_score
             + 0.15 * citation_score
-        ) - exclusion_penalty - banned_penalty
+                          ) - exclusion_penalty - banned_penalty - excluded_title_penalty
         stage_one = stage_one_decision or self.quick_screen(paper)
         extracted_passage = extract_salient_sentence(paper.abstract or paper.title, self.config.search_keywords)
-        decision = self._decision_from_score(relevance_score, stage_one, matched_banned=bool(matched_banned))
+        decision = self._decision_from_score(
+            relevance_score,
+            stage_one,
+            matched_banned=bool(matched_banned),
+            matched_excluded_title_terms=bool(matched_excluded_title_terms),
+        )
         retain_reason = (
             f"Kept because the paper matches the review focus and scored {relevance_score:.1f} against the "
             f"{self.config.relevance_threshold:.1f} threshold."
@@ -105,6 +118,11 @@ class RelevanceScorer:
         if decision == "exclude":
             if matched_banned:
                 exclusion_reason = f"Excluded because banned topics were detected: {', '.join(matched_banned)}."
+            elif matched_excluded_title_terms:
+                exclusion_reason = (
+                    "Excluded because title markers indicate a non-target publication type: "
+                    f"{', '.join(matched_excluded_title_terms)}."
+                )
             elif matched_exclusion:
                 exclusion_reason = (
                     f"Excluded because exclusion criteria matched: {', '.join(matched_exclusion)}."
@@ -119,7 +137,7 @@ class RelevanceScorer:
             f"Topic match {topic_score:.1f}/100, methodology {methodology_score:.1f}/100, "
             f"theory contribution {theoretical_score:.1f}/100, recency {recency_score:.1f}/100, "
             f"citation strength {citation_score:.1f}/100, exclusion penalty {exclusion_penalty:.1f}, "
-            f"banned penalty {banned_penalty:.1f}. "
+            f"banned penalty {banned_penalty:.1f}, title penalty {excluded_title_penalty:.1f}. "
             f"Stage 1 decision: {stage_one}."
         )
         return ScreeningResult(
@@ -133,6 +151,7 @@ class RelevanceScorer:
             matched_inclusion_criteria=matched_inclusion,
             matched_exclusion_criteria=matched_exclusion,
             matched_banned_topics=matched_banned,
+            matched_excluded_title_terms=matched_excluded_title_terms,
             retain_reason=retain_reason,
             exclusion_reason=exclusion_reason,
             screening_context_key=self.config.screening_context_key,
@@ -144,6 +163,7 @@ class RelevanceScorer:
                 "citation_strength": round(citation_score, 2),
                 "exclusion_penalty": round(exclusion_penalty, 2),
                 "banned_penalty": round(banned_penalty, 2),
+                "excluded_title_penalty": round(excluded_title_penalty, 2),
             },
         )
 
@@ -170,8 +190,15 @@ class RelevanceScorer:
             return 10.0
         return min(100.0, math.log10(citation_count + 1) / math.log10(501) * 100.0)
 
-    def _decision_from_score(self, score: float, stage_one: str, *, matched_banned: bool = False) -> str:
-        if matched_banned:
+    def _decision_from_score(
+            self,
+            score: float,
+            stage_one: str,
+            *,
+            matched_banned: bool = False,
+            matched_excluded_title_terms: bool = False,
+    ) -> str:
+        if matched_banned or matched_excluded_title_terms:
             return "exclude"
         if self.config.decision_mode == "strict":
             return "include" if score >= self.config.relevance_threshold else "exclude"

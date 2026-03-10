@@ -4,12 +4,11 @@ import json
 import logging
 from typing import Any
 
-from config import ResearchConfig
 from models.paper import PaperMetadata, ScreeningResult
 
+from config import ResearchConfig
 from .llm_clients import build_llm_client
 from .relevance_scoring import RelevanceScorer
-
 
 LOGGER = logging.getLogger(__name__)
 
@@ -22,6 +21,9 @@ class AIScreener:
         self.llm_enabled = self.llm_client.enabled
 
     def screen(self, paper: PaperMetadata) -> ScreeningResult:
+        if self.scorer.has_hard_exclusion(paper):
+            return self.scorer.deep_score(paper, stage_one_decision="exclude")
+
         if not self.llm_enabled:
             stage_one = self.scorer.quick_screen(paper)
             return self.scorer.deep_score(paper, stage_one_decision=stage_one)
@@ -91,6 +93,7 @@ class AIScreener:
             "Assess the paper and return JSON with keys: relevance_score (0-100), explanation, "
             "extracted_passage, methodology_category, domain_category, decision, retain_reason, "
             "exclusion_reason, matched_inclusion_criteria, matched_exclusion_criteria, matched_banned_topics. "
+            "Also return matched_excluded_title_terms. "
             "Use the criteria topical match, methodological relevance, theoretical contribution, "
             "recency, citation strength.\n"
             f"{self.config.screening_brief}\n"
@@ -118,6 +121,7 @@ class AIScreener:
                 matched_inclusion_criteria=list(parsed.get("matched_inclusion_criteria", []) or []),
                 matched_exclusion_criteria=list(parsed.get("matched_exclusion_criteria", []) or []),
                 matched_banned_topics=list(parsed.get("matched_banned_topics", []) or []),
+                matched_excluded_title_terms=list(parsed.get("matched_excluded_title_terms", []) or []),
                 retain_reason=str(parsed.get("retain_reason", "")),
                 exclusion_reason=str(parsed.get("exclusion_reason", "")),
                 screening_context_key=self.config.screening_context_key,

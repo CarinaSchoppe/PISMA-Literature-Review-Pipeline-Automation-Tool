@@ -3,11 +3,11 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from config import ResearchConfig
 from models.paper import PaperMetadata
+
+from config import ResearchConfig
 from utils.http import RateLimiter, build_session, request_content, request_json
 from utils.text_processing import ensure_parent_directory, slugify_filename
-
 
 LOGGER = logging.getLogger(__name__)
 
@@ -20,7 +20,13 @@ class PDFFetcher:
         self.session = build_session("PRISMA-Literature-Review/1.0")
         self.limiter = RateLimiter(calls_per_second=2.0)
 
-    def fetch_for_paper(self, paper: PaperMetadata) -> PaperMetadata:
+    def fetch_for_paper(
+            self,
+            paper: PaperMetadata,
+            *,
+            download: bool | None = None,
+            target_dir: Path | None = None,
+    ) -> PaperMetadata:
         pdf_link = paper.pdf_link
         open_access = paper.open_access
 
@@ -39,8 +45,9 @@ class PDFFetcher:
                 open_access = bool(payload.get("is_oa")) or open_access
 
         pdf_path = paper.pdf_path
-        if self.config.download_pdfs and pdf_link:
-            pdf_path = self._download_pdf(paper, pdf_link)
+        should_download = self.config.download_pdfs if download is None else download
+        if should_download and pdf_link:
+            pdf_path = self.download_pdf(paper, pdf_link, target_dir=target_dir)
 
         return paper.model_copy(
             update={
@@ -50,10 +57,10 @@ class PDFFetcher:
             }
         )
 
-    def _download_pdf(self, paper: PaperMetadata, url: str) -> str | None:
+    def download_pdf(self, paper: PaperMetadata, url: str, *, target_dir: Path | None = None) -> str | None:
         filename_root = paper.doi or paper.title
         filename = f"{slugify_filename(filename_root)}.pdf"
-        target = Path(self.config.papers_dir) / filename
+        target = (target_dir or Path(self.config.papers_dir)) / filename
         if target.exists():
             return str(target)
 

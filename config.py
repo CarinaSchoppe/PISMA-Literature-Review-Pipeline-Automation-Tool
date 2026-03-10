@@ -10,7 +10,6 @@ from pydantic import BaseModel, Field, field_validator
 
 from utils.text_processing import build_query, ensure_parent_directory, make_query_key
 
-
 BIOMEDICAL_TERMS = {
     "biomedical",
     "medicine",
@@ -27,7 +26,13 @@ BIOMEDICAL_TERMS = {
     "genomics",
 }
 
-SCREENING_ALGORITHM_VERSION = "2026-03-10-v2"
+SCREENING_ALGORITHM_VERSION = "2026-03-10-v3"
+DEFAULT_EXCLUDED_TITLE_TERMS = [
+    "correction",
+    "erratum",
+    "editorial",
+    "retraction",
+]
 
 
 class ApiSettings(BaseModel):
@@ -69,6 +74,7 @@ class ResearchConfig(BaseModel):
     inclusion_criteria: list[str] = Field(default_factory=list)
     exclusion_criteria: list[str] = Field(default_factory=list)
     banned_topics: list[str] = Field(default_factory=list)
+    excluded_title_terms: list[str] = Field(default_factory=lambda: list(DEFAULT_EXCLUDED_TITLE_TERMS))
     search_keywords: list[str]
     boolean_operators: str | None = None
     pages_to_retrieve: int = 2
@@ -79,6 +85,7 @@ class ResearchConfig(BaseModel):
     citation_snowballing_enabled: bool = True
     relevance_threshold: float = 70.0
     download_pdfs: bool = False
+    pdf_download_mode: Literal["all", "relevant_only"] = "all"
     analyze_full_text: bool = False
     full_text_max_chars: int = 12000
     llm_provider: Literal["auto", "heuristic", "openai_compatible", "ollama", "huggingface_local"] = "auto"
@@ -108,6 +115,7 @@ class ResearchConfig(BaseModel):
     researchgate_import_path: Path | None = None
     data_dir: Path = Path("data")
     papers_dir: Path = Path("papers")
+    relevant_pdfs_dir: Path | None = None
     results_dir: Path = Path("results")
     database_path: Path = Path("data/literature_review.db")
     api_settings: ApiSettings = Field(default_factory=ApiSettings)
@@ -120,7 +128,7 @@ class ResearchConfig(BaseModel):
             return [item.strip() for item in value.split(",") if item.strip()]
         return [str(item).strip() for item in value if str(item).strip()]
 
-    @field_validator("inclusion_criteria", "exclusion_criteria", "banned_topics", mode="before")
+    @field_validator("inclusion_criteria", "exclusion_criteria", "banned_topics", "excluded_title_terms", mode="before")
     @classmethod
     def validate_criteria(cls, value: Any) -> list[str]:
         if not value:
@@ -229,6 +237,8 @@ class ResearchConfig(BaseModel):
             lines.append(f"Exclusion criteria: {'; '.join(self.exclusion_criteria)}")
         if self.banned_topics:
             lines.append(f"Banned topics: {'; '.join(self.banned_topics)}")
+        if self.excluded_title_terms:
+            lines.append(f"Excluded title terms: {'; '.join(self.excluded_title_terms)}")
         return "\n".join(lines)
 
     @property
@@ -242,6 +252,7 @@ class ResearchConfig(BaseModel):
             ",".join(sorted(self.inclusion_criteria)),
             ",".join(sorted(self.exclusion_criteria)),
             ",".join(sorted(self.banned_topics)),
+            ",".join(sorted(self.excluded_title_terms)),
             self.decision_mode,
             str(self.relevance_threshold),
             str(self.maybe_threshold_margin),
@@ -260,12 +271,22 @@ class ResearchConfig(BaseModel):
             self.year_range_start,
             self.year_range_end,
         )
-        updated = self.model_copy(update={"include_pubmed": include_pubmed, "query_key": query_key})
+        relevant_pdfs_dir = self.relevant_pdfs_dir or (self.papers_dir / "relevant")
+        updated = self.model_copy(
+            update={
+                "include_pubmed": include_pubmed,
+                "query_key": query_key,
+                "relevant_pdfs_dir": relevant_pdfs_dir,
+            }
+        )
         updated.ensure_directories()
         return updated
 
     def ensure_directories(self) -> None:
-        for path in (self.data_dir, self.papers_dir, self.results_dir):
+        paths = [self.data_dir, self.papers_dir, self.results_dir]
+        if self.relevant_pdfs_dir:
+            paths.append(self.relevant_pdfs_dir)
+        for path in paths:
             path.mkdir(parents=True, exist_ok=True)
         ensure_parent_directory(self.database_path)
 
@@ -372,6 +393,22 @@ class ResearchConfig(BaseModel):
             raw_banned = ask("Optional banned topics separated by semicolon", "")
             banned_topics = [item.strip() for item in raw_banned.split(";") if item.strip()]
 
+        excluded_title_terms = value_for(
+            "excluded_title_terms",
+            getattr(args, "excluded_title_terms", None),
+            list(DEFAULT_EXCLUDED_TITLE_TERMS),
+        )
+        if (
+                not args.config_file
+                and getattr(args, "excluded_title_terms", None) is None
+                and "excluded_title_terms" not in file_config
+        ):
+            raw_excluded_titles = ask(
+                "Optional excluded title terms separated by semicolon",
+                "; ".join(DEFAULT_EXCLUDED_TITLE_TERMS),
+            )
+            excluded_title_terms = [item.strip() for item in raw_excluded_titles.split(";") if item.strip()]
+
         boolean_operators = value_for("boolean_operators", args.boolean, "AND")
         if args.boolean is None and "boolean_operators" not in file_config:
             boolean_operators = ask("Optional boolean operator or expression", "AND")
@@ -456,6 +493,7 @@ class ResearchConfig(BaseModel):
             inclusion_criteria=inclusion_criteria,
             exclusion_criteria=exclusion_criteria,
             banned_topics=banned_topics,
+            excluded_title_terms=excluded_title_terms,
             search_keywords=keywords,
             boolean_operators=boolean_operators,
             pages_to_retrieve=pages_to_retrieve,
@@ -466,6 +504,7 @@ class ResearchConfig(BaseModel):
             citation_snowballing_enabled=citation_snowballing,
             relevance_threshold=relevance_threshold,
             download_pdfs=download_pdfs,
+            pdf_download_mode=value_for("pdf_download_mode", getattr(args, "pdf_download_mode", None), "all"),
             analyze_full_text=analyze_full_text,
             full_text_max_chars=value_for("full_text_max_chars", getattr(args, "full_text_max_chars", None), 12000),
             llm_provider=value_for("llm_provider", getattr(args, "llm_provider", None), "auto"),
@@ -513,6 +552,11 @@ class ResearchConfig(BaseModel):
             ),
             data_dir=value_for("data_dir", getattr(args, "data_dir", None), Path("data")),
             papers_dir=value_for("papers_dir", getattr(args, "papers_dir", None), Path("papers")),
+            relevant_pdfs_dir=value_for(
+                "relevant_pdfs_dir",
+                getattr(args, "relevant_pdfs_dir", None),
+                None,
+            ),
             results_dir=value_for("results_dir", getattr(args, "results_dir", None), Path("results")),
             database_path=value_for(
                 "database_path",
@@ -537,6 +581,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--inclusion-criteria", help="Semicolon-separated inclusion criteria")
     parser.add_argument("--exclusion-criteria", help="Semicolon-separated exclusion criteria")
     parser.add_argument("--banned-topics", help="Semicolon-separated banned topics or themes")
+    parser.add_argument(
+        "--excluded-title-terms",
+        help="Semicolon-separated title markers that should be excluded, for example correction;erratum;editorial",
+    )
     parser.add_argument("--keywords", help="Comma-separated search keywords")
     parser.add_argument("--boolean", help="Boolean operator or expression to join keywords")
     parser.add_argument("--pages", type=int, help="Number of pages or result batches per source")
@@ -555,6 +603,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=None,
         help="Download PDFs through Unpaywall and direct open-access links",
+    )
+    parser.add_argument(
+        "--pdf-download-mode",
+        choices=["all", "relevant_only"],
+        help="Download PDFs for all discoverable papers or only for papers that pass the relevance threshold",
     )
     parser.add_argument(
         "--analyze-full-text",
@@ -715,6 +768,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--data-dir", help="Directory for pipeline state and SQLite artifacts")
     parser.add_argument("--papers-dir", help="Directory for downloaded PDFs and extracted text assets")
+    parser.add_argument(
+        "--relevant-pdfs-dir",
+        help="Directory where PDFs for relevant papers should be stored when pdf-download-mode is relevant_only",
+    )
     parser.add_argument("--results-dir", help="Directory for CSV, JSON, Markdown, and SQLite result exports")
     parser.add_argument("--database-path", help="Path to the main SQLite database file")
     parser.add_argument(

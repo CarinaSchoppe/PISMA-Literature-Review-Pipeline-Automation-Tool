@@ -21,6 +21,7 @@ class ScreeningResult(BaseModel):
     matched_inclusion_criteria: list[str] = Field(default_factory=list)
     matched_exclusion_criteria: list[str] = Field(default_factory=list)
     matched_banned_topics: list[str] = Field(default_factory=list)
+    matched_excluded_title_terms: list[str] = Field(default_factory=list)
     retain_reason: str = ""
     exclusion_reason: str = ""
     screening_context_key: str | None = None

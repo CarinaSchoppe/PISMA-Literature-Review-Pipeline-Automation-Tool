@@ -7,10 +7,10 @@ from typing import Any
 
 import networkx as nx
 import pandas as pd
+from models.paper import PaperMetadata
 
 from analysis.ai_screener import AIScreener
 from config import ResearchConfig
-from models.paper import PaperMetadata
 from utils.text_processing import top_terms
 
 
@@ -289,6 +289,7 @@ class ReportGenerator:
             "matched_inclusion_criteria",
             "matched_exclusion_criteria",
             "matched_banned_topics",
+            "matched_excluded_title_terms",
             "references",
             "citations",
             "extracted_passage",
@@ -381,6 +382,10 @@ class ReportGenerator:
             ),
             "matched_banned_topics": json.dumps(
                 paper.screening_details.get("matched_banned_topics", []),
+                ensure_ascii=False,
+            ),
+            "matched_excluded_title_terms": json.dumps(
+                paper.screening_details.get("matched_excluded_title_terms", []),
                 ensure_ascii=False,
             ),
             "references": json.dumps(paper.references, ensure_ascii=False),
