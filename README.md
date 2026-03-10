@@ -2,161 +2,158 @@
 
 API-first, production-oriented Python project for systematic literature discovery, deduplication, citation expansion, AI-assisted screening, PDF acquisition, and report generation.
 
-The project is designed around two equally supported entry modes:
+The project supports two equal entry modes:
 
-- guided desktop UI with tabs, handbook help, hover explanations, live logs, result tables, and a force-stop button
-- scriptable CLI with config-file support for repeatable and automated runs
+* a guided desktop UI for local interactive use
+* a scriptable CLI for repeatable and automated runs
 
-No Jupyter notebook is required. The intended workflow is local desktop UI or CLI.
+No Jupyter notebook is required.
 
-For the full operator reference, see [HANDBOOK.md](HANDBOOK.md). For the planned target state and feature roadmap, see [ROADMAP.md](ROADMAP.md).
+For full operating instructions, see [HANDBOOK.md](HANDBOOK.md).
+For the planned target state and roadmap, see [ROADMAP.md](ROADMAP.md).
 
-## What The Project Does
+---
 
-The pipeline can:
+## Overview
 
-- collect metadata from supported scholarly APIs
-- merge and deduplicate records by DOI and title similarity
-- persist papers, screening cache, and run state in SQLite
-- expand records through backward and forward citation snowballing
-- enrich records with open-access PDF metadata and optionally download PDFs
-- screen papers with heuristic rules or one or more LLM passes
-- export accepted and rejected records with reasons into CSV, JSON, Markdown, and SQLite
-- generate PRISMA-style flow artifacts and ranked outputs
+This pipeline is built for structured literature-review workflows where reproducibility, screening transparency, and multi-source metadata collection matter.
 
-The workflow order is:
+It can:
+
+* collect metadata from supported scholarly APIs
+* merge and deduplicate records by DOI and title similarity
+* persist papers, screening cache, and run state in SQLite
+* expand results through backward and forward citation snowballing
+* enrich records with open-access PDF metadata and optionally download PDFs
+* screen papers with heuristics or one or more LLM passes
+* export accepted and rejected records with reasons
+* generate PRISMA-style flow outputs and ranked results
+
+Workflow:
 
 ```text
 input -> discovery -> deduplication -> database storage -> citation expansion -> pdf enrichment -> AI screening -> scoring -> ranking -> report generation
 ```
 
-## Current Quality Baseline
+---
 
-The repository is maintained with a tested baseline of:
+## Key Capabilities
 
-- `163` passing tests
-- `99.14%` app-code coverage excluding `tests/*`
-- `99.17%` full-repository coverage including `tests/*`
-- clean `ruff` lint
-- clean `compileall`
+* guided desktop UI and classic console wizard
+* headless CLI and JSON config-file runs
+* SQLite persistence for run state and screening cache
+* DOI and title-similarity deduplication
+* backward and forward citation snowballing
+* separate `collect` and `analyze` run modes
+* configurable PDF download strategies
+* optional full-text extraction from downloaded PDFs
+* included and excluded outputs with rationale
+* PRISMA-style flow artifacts
+* deterministic offline fixture mode for testing
+* multi-threaded discovery, enrichment, and screening orchestration
+* per-source throttling and stage-specific worker overrides
+* profile save/load in the GUI
 
-You can reproduce that locally with the commands in the `Testing And Quality` section.
+---
 
 ## Supported Discovery Sources
 
-Live API sources:
+### Live API sources
 
-- OpenAlex
-- Semantic Scholar
-- Crossref
-- Springer Nature Metadata API
-- arXiv API
-- PubMed
+* OpenAlex
+* Semantic Scholar
+* Crossref
+* Springer Nature Metadata API
+* arXiv API
+* PubMed
 
-Manual import sources:
+### Manual import sources
 
-- Google Scholar export files
-- ResearchGate export files
-- arbitrary CSV or JSON metadata imports
-- offline fixture files for deterministic testing
+* Google Scholar export files
+* ResearchGate export files
+* arbitrary CSV or JSON metadata imports
+* offline fixture files for deterministic testing
 
-Important boundary:
+### Boundary
 
-- the project is API-first
-- Google Scholar and ResearchGate are handled through manual imports, not direct live scraping
-- this keeps the workflow more stable and easier to test
+The project is API-first. Google Scholar and ResearchGate are handled through manual imports rather than live scraping. This keeps the workflow more stable, testable, and maintainable.
+
+---
 
 ## Supported Screening Providers
 
 Built-in screening modes:
 
-- `heuristic`
-- `openai_compatible`
-- `gemini`
-- `ollama`
-- `huggingface_local`
+* `heuristic`
+* `openai_compatible`
+* `gemini`
+* `ollama`
+* `huggingface_local`
 
-This means the project can use:
+This supports:
 
-- ChatGPT/OpenAI-compatible endpoints
-- Google Gemini
-- Ollama-hosted local models
-- local Hugging Face models, including open-weight models such as `Qwen/Qwen3-14B` and `openai/gpt-oss-20b`
+* OpenAI-compatible endpoints
+* Google Gemini
+* Ollama-hosted local models
+* local Hugging Face models, including open-weight models such as `Qwen/Qwen3-14B` and `openai/gpt-oss-20b`
 
 Multi-pass screening is supported. Each pass can define:
 
-- provider
-- threshold
-- decision mode
-- maybe margin
-- model override
-- minimum previous-pass score required before the pass runs
+* provider
+* threshold
+* decision mode
+* maybe margin
+* model override
+* minimum previous-pass score required before execution
 
-## Guided Desktop UI
+---
 
-Start the project without explicit run flags to open the launcher:
+## Desktop UI
+
+Launching without explicit mode flags opens the launcher:
 
 ```powershell
 py -3 main.py
 ```
 
-The guided desktop workbench provides:
+The guided workbench includes:
 
-- startup launcher with guided UI or classic console wizard
-- a refreshed light theme with higher-contrast tabs, accent actions, danger-stop styling, and cleaner tables
-- English-only visible text across the GUI, CLI prompts, handbook entries, hover help, and status guidance
-- settings pages:
-  - `Review Setup`
-  - `Discovery`
-  - `AI Screening`
-  - `Connections and Keys`
-  - `Storage and Output`
-  - `Advanced Runtime`
-- a left-hand page rail so the settings follow the review workflow instead of one long stacked panel
-- a right-hand inspector with dedicated `Find`, `Quick Edit`, `Guides`, and `Summary` tabs
-- scrollable settings pages so the window stays usable on smaller screens
-- `Show advanced settings` toggle so lower-level runtime options stay out of the way until needed
-- quick-edit controls for the most-used model and output settings, without forcing every option onto the main form at once
-- searchable `Handbook` tab
-- hover help and keyboard-focus help for settings, with detailed English explanations that describe the purpose of each flag, what changes when a switch is on or off, and concrete examples for common workflows
-- live `Run Log` tab
-- result tabs for:
-  - `All Papers`
-  - `Included`
-  - `Excluded`
-  - `Outputs`
-- `Analyze Stored Results` button to skip discovery and rerun screening/reporting
-- `Force Stop` button for controlled stop requests
-- path pickers for database, results, PDF, cache, and import paths
-- error pop-ups for invalid configuration, failed runs, stopped runs, and invalid paths
+* workflow-oriented settings pages
+* searchable handbook/help access
+* hover and focus explanations for settings
+* live run logs
+* result tabs for all, included, excluded, and output artifacts
+* path pickers for database, output, cache, and PDF locations
+* stored-result re-analysis
+* controlled stop requests via `Force Stop`
 
-The GUI is not a second implementation. It edits the same validated runtime config used by the CLI.
+The GUI is not a separate implementation. It edits the same validated runtime configuration used by the CLI.
 
-## CLI And GUI Setting Parity
+---
 
-The project is structured so runtime settings are configurable in both places:
+## CLI And GUI Parity
 
-- CLI flags
-- JSON config files
-- guided GUI form
+Runtime settings can be configured through:
+
+* CLI flags
+* JSON config files
+* guided GUI forms
 
 That includes:
 
-- discovery source toggles
-- discovery breadth and result limits
-- per-source API rate limits
-- min/max discovery gates
-- thresholds and decision mode
-- pass-chain setup
-- provider and model selection
-- API keys and endpoint URLs
-- PDF download behavior
-- CSV/JSON/Markdown/SQLite export switches
-- path selection for state, outputs, PDFs, and database files
-- stage-specific worker overrides
-- reset-query and clear-cache rerun controls
-- logging and verbosity controls
-- resume and progress-bar controls
+* discovery source toggles
+* discovery breadth and result limits
+* provider and model selection
+* pass-chain setup
+* API keys and endpoint URLs
+* PDF download behaviour
+* export options
+* database and output paths
+* worker/thread controls
+* rerun and cache-reset controls
+* logging and verbosity settings
+
+---
 
 ## Project Structure
 
@@ -207,26 +204,7 @@ project_root/
     `-- ...
 ```
 
-## Core Features
-
-- interactive guided UI and classic console wizard
-- headless CLI and JSON config-file runs
-- SQLite persistence for runtime state and screening cache
-- DOI and title-similarity deduplication
-- backward and forward citation snowballing
-- separate `collect` and `analyze` run modes
-- configurable PDF download modes:
-  - all open-access PDFs
-  - only relevant PDFs after screening
-- optional full-text extraction from downloaded PDFs
-- included and excluded outputs with rationale
-- PRISMA-style flow output
-- structured verbose and debug logging
-- profile save/load in the GUI
-- deterministic offline fixture mode for testing
-- multi-threaded discovery, PDF/network enrichment, screening preparation, and screening orchestration
-- per-source API throttling and stage-specific worker overrides
-- pre-run query reset and screening-cache reset controls
+---
 
 ## Installation
 
@@ -245,55 +223,59 @@ Optional local-model runtime:
 py -3 -m pip install -r requirements-local-llm.txt
 ```
 
+---
+
 ## Environment Variables
 
 Recommended environment variables:
 
-- `UNPAYWALL_EMAIL`
-- `CROSSREF_MAILTO`
-- `SEMANTIC_SCHOLAR_API_KEY`
-- `SPRINGER_API_KEY`
-- `OPENAI_API_KEY`
-- `OPENAI_BASE_URL`
-- `OPENAI_MODEL`
-- `GEMINI_API_KEY` or `GOOGLE_API_KEY`
-- `GEMINI_BASE_URL`
-- `GEMINI_MODEL`
-- `OLLAMA_BASE_URL`
-- `OLLAMA_MODEL`
-- `OLLAMA_API_KEY`
-- `HF_MODEL_ID`
-- `HF_TASK`
-- `HF_DEVICE`
-- `HF_DTYPE`
-- `HF_MAX_NEW_TOKENS`
-- `HF_HOME` or `TRANSFORMERS_CACHE`
-- `HF_TRUST_REMOTE_CODE`
-- `LLM_TEMPERATURE`
+* `UNPAYWALL_EMAIL`
+* `CROSSREF_MAILTO`
+* `SEMANTIC_SCHOLAR_API_KEY`
+* `SPRINGER_API_KEY`
+* `OPENAI_API_KEY`
+* `OPENAI_BASE_URL`
+* `OPENAI_MODEL`
+* `GEMINI_API_KEY` or `GOOGLE_API_KEY`
+* `GEMINI_BASE_URL`
+* `GEMINI_MODEL`
+* `OLLAMA_BASE_URL`
+* `OLLAMA_MODEL`
+* `OLLAMA_API_KEY`
+* `HF_MODEL_ID`
+* `HF_TASK`
+* `HF_DEVICE`
+* `HF_DTYPE`
+* `HF_MAX_NEW_TOKENS`
+* `HF_HOME` or `TRANSFORMERS_CACHE`
+* `HF_TRUST_REMOTE_CODE`
+* `LLM_TEMPERATURE`
 
 If no remote or local LLM backend is configured, the project still works with the heuristic screener.
 
+---
+
 ## Quick Start
 
-Guided launcher:
+### Guided launcher
 
 ```powershell
 py -3 main.py
 ```
 
-Open the desktop UI directly:
+### Open the desktop UI directly
 
 ```powershell
 py -3 main.py --ui
 ```
 
-Classic console wizard directly:
+### Open the console wizard directly
 
 ```powershell
 py -3 main.py --wizard
 ```
 
-Headless run:
+### Run headless
 
 ```powershell
 py -3 main.py ^
@@ -308,16 +290,16 @@ py -3 main.py ^
   --citation-snowballing ^
   --download-pdfs ^
   --pdf-download-mode relevant_only ^
-  --relevant-pdfs-dir papers\\relevant_keep
+  --relevant-pdfs-dir papers\relevant_keep
 ```
 
-Config-file run:
+### Run from config file
 
 ```powershell
 py -3 main.py --config-file tests\fixtures\offline_config.json
 ```
 
-Analyze existing stored results without new discovery:
+### Analyze stored results without new discovery
 
 ```powershell
 py -3 main.py ^
@@ -326,9 +308,11 @@ py -3 main.py ^
   --run-mode analyze
 ```
 
+---
+
 ## Example Provider Runs
 
-OpenAI-compatible:
+### OpenAI-compatible
 
 ```powershell
 py -3 main.py ^
@@ -339,7 +323,7 @@ py -3 main.py ^
   --verbosity verbose
 ```
 
-Gemini:
+### Gemini
 
 ```powershell
 py -3 main.py ^
@@ -350,20 +334,22 @@ py -3 main.py ^
   --verbosity verbose
 ```
 
-Ollama:
+### Ollama
 
 ```powershell
 py -3 main.py ^
   --config-file configs\ollama_local.example.json
 ```
 
-Local Hugging Face:
+### Local Hugging Face
 
 ```powershell
 py -3 main.py ^
   --llm-provider huggingface_local ^
   --huggingface-model Qwen/Qwen3-14B
 ```
+
+---
 
 ## Multi-Pass Analysis
 
@@ -377,109 +363,125 @@ py -3 main.py ^
   --analysis-pass "final|openai_compatible|88|strict|5|gpt-5.4|82"
 ```
 
-The same pass-chain logic is editable in the GUI through `Edit Pass Chain`.
+The same pass-chain logic can be edited in the GUI through `Edit Pass Chain`.
+
+---
 
 ## Output Artifacts
 
-Depending on config, the project writes:
+Depending on configuration, the project can write:
 
-- `results/papers.csv`
-- `results/included_papers.csv`
-- `results/excluded_papers.csv`
-- `results/top_papers.json`
-- `results/citation_graph.json`
-- `results/review_summary.md`
-- `results/prisma_flow.json`
-- `results/prisma_flow.md`
-- `results/included_papers.db`
-- `results/excluded_papers.db`
-- `results/run_config.json`
-- PDFs under `papers/` or the configured relevant-PDF directory
+* `results/papers.csv`
+* `results/included_papers.csv`
+* `results/excluded_papers.csv`
+* `results/top_papers.json`
+* `results/citation_graph.json`
+* `results/review_summary.md`
+* `results/prisma_flow.json`
+* `results/prisma_flow.md`
+* `results/included_papers.db`
+* `results/excluded_papers.db`
+* `results/run_config.json`
+* PDFs under `papers/` or the configured relevant-PDF directory
 
 The main SQLite database stores:
 
-- bibliographic metadata
-- source information
-- abstract and enrichment data
-- references and citations
-- screening decisions
-- screening explanations
-- cached screening context for resume and re-analysis control
+* bibliographic metadata
+* source information
+* abstract and enrichment data
+* references and citations
+* screening decisions
+* screening explanations
+* cached screening context for resume and re-analysis control
+
+---
 
 ## Important Runtime Controls
 
-Discovery:
+### Discovery
 
-- source toggles for OpenAlex, Semantic Scholar, Crossref, Springer, arXiv, and PubMed
-- per-source rate limits for OpenAlex, Semantic Scholar, Crossref, Springer, arXiv, PubMed, and Unpaywall
-- `pages_to_retrieve`
-- `results_per_page`
-- `max_discovered_records`
-- `min_discovered_records`
-- `max_papers_to_analyze`
-- `skip_discovery`
-- `citation_snowballing_enabled`
-- `discovery_strategy`
+* source toggles for OpenAlex, Semantic Scholar, Crossref, Springer, arXiv, and PubMed
+* per-source rate limits
+* `pages_to_retrieve`
+* `results_per_page`
+* `max_discovered_records`
+* `min_discovered_records`
+* `max_papers_to_analyze`
+* `skip_discovery`
+* `citation_snowballing_enabled`
+* `discovery_strategy`
 
-Screening:
+### Screening
 
-- `llm_provider`
-- pass-chain definitions
-- `relevance_threshold`
-- `decision_mode`
-- `maybe_threshold_margin`
-- `analyze_full_text`
-- `full_text_max_chars`
+* `llm_provider`
+* pass-chain definitions
+* `relevance_threshold`
+* `decision_mode`
+* `maybe_threshold_margin`
+* `analyze_full_text`
+* `full_text_max_chars`
 
-Storage and output:
+### Storage and output
 
-- `download_pdfs`
-- `pdf_download_mode`
-- `output_csv`
-- `output_json`
-- `output_markdown`
-- `output_sqlite_exports`
-- `data_dir`
-- `papers_dir`
-- `relevant_pdfs_dir`
-- `results_dir`
-- `database_path`
+* `download_pdfs`
+* `pdf_download_mode`
+* `output_csv`
+* `output_json`
+* `output_markdown`
+* `output_sqlite_exports`
+* `data_dir`
+* `papers_dir`
+* `relevant_pdfs_dir`
+* `results_dir`
+* `database_path`
 
-Runtime and logging:
+### Runtime and logging
 
-- `run_mode`
-- `verbosity`
-- `max_workers`
-- `discovery_workers`
-- `io_workers`
-- `screening_workers`
-- `request_timeout_seconds`
-- `resume_mode`
-- `reset_query_records`
-- `clear_screening_cache`
-- `disable_progress_bars`
-- `log_http_requests`
-- `log_http_payloads`
-- `log_llm_prompts`
-- `log_llm_responses`
-- `log_screening_decisions`
+* `run_mode`
+* `verbosity`
+* `max_workers`
+* `discovery_workers`
+* `io_workers`
+* `screening_workers`
+* `request_timeout_seconds`
+* `resume_mode`
+* `reset_query_records`
+* `clear_screening_cache`
+* `disable_progress_bars`
+* `log_http_requests`
+* `log_http_payloads`
+* `log_llm_prompts`
+* `log_llm_responses`
+* `log_screening_decisions`
 
-`max_workers` controls the global thread-pool fallback. `discovery_workers`, `io_workers`, and `screening_workers` can override that fallback per stage, and `0` means "inherit the global value".
+`max_workers` controls the global thread-pool fallback. `discovery_workers`, `io_workers`, and `screening_workers` can override that value per stage. A value of `0` means “inherit the global value”.
 
-## Error Handling And Stop Behavior
+---
 
-The GUI surfaces operational problems through:
+## Error Handling And Stop Behaviour
 
-- validation pop-ups for invalid config
-- path pop-ups for missing output or file targets
-- run failure pop-ups when a worker raises an exception
-- stop warnings when a run ends due to a user stop request
+The GUI surfaces operational issues through:
 
-`Force Stop` is a controlled stop, not a kill switch. A running HTTP request or model call may need a moment to finish before shutdown completes.
+* validation pop-ups for invalid configuration
+* path pop-ups for missing or invalid output/file targets
+* failure pop-ups when a worker raises an exception
+* stop warnings when a run ends due to a user stop request
+
+`Force Stop` is a controlled stop request, not a hard kill. A running HTTP request or model call may need a moment to complete before shutdown finishes.
+
+---
 
 ## Testing And Quality
 
-Run the complete suite:
+Current tested baseline:
+
+* `163` passing tests
+* `99.14%` app-code coverage excluding `tests/*`
+* `99.17%` full-repository coverage including `tests/*`
+* clean `ruff` lint
+* clean `compileall`
+
+Run the test suite:
 
 ```powershell
 py -3 -m unittest discover -s tests -v
@@ -505,13 +507,13 @@ py -3 -m coverage report -m --omit "tests/*"
 py -3 -m coverage html -d results\coverage_html_app --omit "tests/*"
 ```
 
-Generate a JaCoCo-style detailed coverage bundle:
+Generate a JaCoCo-style coverage bundle:
 
 ```powershell
 py -3 coverage_report.py
 ```
 
-Generate the stricter app-code gate used for release checks:
+Generate the stricter app-code release gate:
 
 ```powershell
 py -3 coverage_report.py --top-files 25 --fail-under 99
@@ -523,53 +525,60 @@ Generate the full-repository report, including `tests/`:
 py -3 coverage_report.py --include-tests --results-dir results\coverage_report_all --top-files 25 --fail-under 99
 ```
 
-Each coverage-report run uses its own coverage data file inside the selected results directory, so separate report runs do not collide on the same root `.coverage` file.
-
-That writes:
-
-- `results/coverage_report/coverage_report.txt`
-- `results/coverage_report/coverage_report.md`
-- `results/coverage_report/coverage_summary.json`
-- `results/coverage_report/html/index.html`
-- `results/coverage_report_all/coverage_report.txt`
-- `results/coverage_report_all/coverage_report.md`
-- `results/coverage_report_all/coverage_summary.json`
-- `results/coverage_report_all/html/index.html`
-
 Offline deterministic smoke test:
 
 ```powershell
 py -3 main.py --config-file tests\fixtures\offline_config.json
 ```
 
-The HTML coverage report is written to:
+Generated reports include:
 
-- `results/coverage_html_app/index.html`
+* `results/coverage_report/coverage_report.txt`
+* `results/coverage_report/coverage_report.md`
+* `results/coverage_report/coverage_summary.json`
+* `results/coverage_report/html/index.html`
+* `results/coverage_report_all/coverage_report.txt`
+* `results/coverage_report_all/coverage_report.md`
+* `results/coverage_report_all/coverage_summary.json`
+* `results/coverage_report_all/html/index.html`
+* `results/coverage_html_app/index.html`
+
+Each coverage-report run uses its own coverage data file inside the target results directory, so separate report runs do not collide with the root `.coverage` file.
+
+---
 
 ## Known Boundaries
 
-- Semantic Scholar can return `429` rate-limit errors on public quotas
-- Google Scholar and ResearchGate are import-based, not live-query integrations
-- Springer live discovery requires a valid API key
-- local Hugging Face inference depends on the installed runtime and available hardware
-- full-text extraction depends on PDF availability and optional `pypdf`
+* Semantic Scholar may return `429` rate-limit responses on public quotas
+* Google Scholar and ResearchGate are import-based, not live-query integrations
+* Springer live discovery requires a valid API key
+* local Hugging Face inference depends on installed runtime and available hardware
+* full-text extraction depends on PDF availability and optional `pypdf`
+
+---
 
 ## Recommended Workflow
 
-For everyday use:
+### For interactive use
 
 1. Start with the guided UI.
-2. Fill in topic, research question, objective, and include/exclude criteria.
-3. Choose sources and discovery breadth.
-4. Set model provider or pass chain.
-5. Decide whether you want metadata-only collection or full analysis.
-6. Choose where results, database files, and PDFs should go.
-7. Run with `verbose` first when tuning.
-8. Save the setup as a profile for later reuse.
+2. Enter topic, research question, objective, and include/exclude criteria.
+3. Choose discovery sources and search breadth.
+4. Select a screening provider or multi-pass chain.
+5. Decide between metadata-only collection and full analysis.
+6. Choose output, database, and PDF locations.
+7. Run with `verbose` first while tuning settings.
+8. Save the setup as a profile.
 
-For repeatable research runs:
+### For repeatable runs
 
-1. save a JSON config or GUI profile
-2. run headless from CLI
-3. archive the generated CSV/JSON/SQLite outputs with the run config snapshot
+1. Save a JSON config or GUI profile.
+2. Run headless from the CLI.
+3. Archive the generated outputs together with the run config snapshot.
 
+---
+
+## Documentation
+
+* [HANDBOOK.md](HANDBOOK.md) — full operator reference
+* [ROADMAP.md](ROADMAP.md) — planned feature roadmap
