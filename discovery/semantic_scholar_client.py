@@ -37,7 +37,7 @@ class SemanticScholarClient:
             headers["x-api-key"] = config.api_settings.semantic_scholar_api_key
         self.config = config
         self.session = build_session("PRISMA-Literature-Review/1.0", extra_headers=headers)
-        self.limiter = RateLimiter(calls_per_second=3.0)
+        self.limiter = RateLimiter(calls_per_second=self.config.api_settings.semantic_scholar_calls_per_second)
 
     def search(self) -> list[PaperMetadata]:
         """Search Semantic Scholar across configured query variants."""

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -117,6 +118,10 @@ class PipelineControllerHelperTests(unittest.TestCase):
                 max_discovered_records=2,
                 min_discovered_records=1,
                 relevance_threshold=77,
+                max_workers=8,
+                discovery_workers=3,
+                io_workers=2,
+                screening_workers=4,
                 analysis_passes=[
                     {
                         "name": "fast",
@@ -147,6 +152,10 @@ class PipelineControllerHelperTests(unittest.TestCase):
                 self.assertEqual(controller._summary_config().api_settings.ollama_model, "gpt-oss:20b")
                 self.assertTrue(controller._requires_local_llm_serial_execution())
                 self.assertEqual(controller._screening_worker_count(), 1)
+                self.assertEqual(config.effective_discovery_workers, 3)
+                self.assertEqual(config.effective_io_workers, 2)
+                self.assertEqual(config.effective_screening_workers, 4)
+                self.assertEqual(controller._parallel_worker_count(10), 2)
                 self.assertEqual(controller._final_threshold(), 85)
                 self.assertEqual(len(controller._apply_discovery_limits([PaperMetadata(title="A"), PaperMetadata(title="B"), PaperMetadata(title="C")])), 2)
                 self.assertTrue(controller._below_minimum_discovery_threshold(0))
@@ -394,6 +403,83 @@ class PipelineControllerHelperTests(unittest.TestCase):
                 self.assertEqual(results, [])
             finally:
                 failing_controller.close()
+
+    def test_parallel_mapping_preserves_order_and_caps_worker_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            controller = PipelineController(self._config(root, max_workers=4, verbosity="verbose"))
+            try:
+                papers = [
+                    PaperMetadata(title="Paper A", source="fixture"),
+                    PaperMetadata(title="Paper B", source="fixture"),
+                    PaperMetadata(title="Paper C", source="fixture"),
+                ]
+
+                def worker(paper: PaperMetadata) -> PaperMetadata:
+                    delays = {"Paper A": 0.03, "Paper B": 0.01, "Paper C": 0.02}
+                    time.sleep(delays[paper.title])
+                    return paper.model_copy(update={"venue": f"done-{paper.title}"})
+
+                with patch("pipeline.pipeline_controller.LOGGER.info"):
+                    results = controller._map_papers_with_executor(papers, worker, desc="Parallel stage")
+                    empty_results = controller._map_papers_with_executor([], worker, desc="Empty stage")
+                    serial_results = controller._map_papers_with_executor([papers[0]], worker, desc="Serial stage")
+
+                self.assertEqual([paper.title for paper in results], ["Paper A", "Paper B", "Paper C"])
+                self.assertEqual([paper.venue for paper in results], ["done-Paper A", "done-Paper B", "done-Paper C"])
+                self.assertEqual(empty_results, [])
+                self.assertEqual([paper.venue for paper in serial_results], ["done-Paper A"])
+                self.assertEqual(controller._parallel_worker_count(1), 1)
+                self.assertEqual(controller._parallel_worker_count(3), 3)
+                self.assertEqual(controller._parallel_worker_count(20), 4)
+            finally:
+                controller.close()
+
+    def test_screen_papers_uses_parallel_preparation_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            controller = PipelineController(
+                self._config(
+                    root,
+                    run_mode="analyze",
+                    analysis_passes=[{"name": "fast", "llm_provider": "heuristic", "threshold": 60}],
+                )
+            )
+            try:
+                paper = PaperMetadata(database_id=2, title="Prepared", abstract="A", source="fixture")
+                result = ScreeningResult(stage_one_decision="include", relevance_score=75, decision="include")
+
+                controller.database.get_papers_for_analysis = Mock(return_value=[paper])
+                controller.database.get_cached_screening_entry = Mock(return_value=None)
+                controller.database.cache_screening_result = Mock()
+                controller.database.update_screening_result = Mock()
+                controller._screen_paper_with_passes = Mock(return_value=(result, {"fresh": True}))
+                controller._map_papers_with_executor = Mock(return_value=[paper])
+
+                stats = controller._screen_papers()
+
+                self.assertEqual(stats["screened_count"], 1)
+                controller._map_papers_with_executor.assert_called_once()
+            finally:
+                controller.close()
+
+    def test_prepare_and_download_helpers_cover_blank_excerpt_and_no_relevant_pdfs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            controller = PipelineController(self._config(root, analyze_full_text=True))
+            try:
+                paper = PaperMetadata(title="Full text", source="fixture", pdf_path="paper.pdf")
+                with patch.object(controller.full_text_extractor, "extract_excerpt", return_value=""):
+                    prepared = controller._prepare_paper_for_screening(paper)
+                self.assertEqual(prepared, paper)
+                self.assertEqual(
+                    controller._download_relevant_pdfs(
+                        [PaperMetadata(title="Low", source="fixture", relevance_score=10, inclusion_decision="exclude")]
+                    ),
+                    [],
+                )
+            finally:
+                controller.close()
 
     def test_screen_paper_with_passes_covers_missing_screener_logging_and_empty_config(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

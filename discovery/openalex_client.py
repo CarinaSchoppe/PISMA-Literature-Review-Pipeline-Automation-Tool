@@ -19,7 +19,7 @@ class OpenAlexClient:
     def __init__(self, config: ResearchConfig) -> None:
         self.config = config
         self.session = build_session("PRISMA-Literature-Review/1.0")
-        self.limiter = RateLimiter(calls_per_second=5.0)
+        self.limiter = RateLimiter(calls_per_second=self.config.api_settings.openalex_calls_per_second)
 
     def search(self) -> list[PaperMetadata]:
         """Search OpenAlex across configured query variants and pagination windows."""

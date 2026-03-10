@@ -76,6 +76,35 @@ class DatabaseManagerTests(unittest.TestCase):
         self.database.update_citations(999, [], [])
         self.database.update_screening_result(999, ScreeningResult(decision="exclude"), screening_details={})
 
+    def test_delete_papers_and_clear_screening_cache_support_targeted_resets(self) -> None:
+        stored = self.database.upsert_papers(
+            [
+                PaperMetadata(title="Paper A", doi="10.1000/a", source="fixture"),
+                PaperMetadata(title="Paper B", doi="10.1000/b", source="fixture"),
+            ],
+            "query-2",
+        )
+        result = ScreeningResult(stage_one_decision="include", relevance_score=88, decision="include")
+        self.database.cache_screening_result(
+            paper=stored[0],
+            paper_cache_key="cache-a",
+            screening_context_key="ctx-a",
+            result=result,
+            screening_details={"final_result": result.model_dump(mode="json")},
+        )
+        self.database.cache_screening_result(
+            paper=stored[1],
+            paper_cache_key="cache-b",
+            screening_context_key="ctx-b",
+            result=result,
+            screening_details={"final_result": result.model_dump(mode="json")},
+        )
+
+        self.assertEqual(self.database.clear_screening_cache("ctx-a"), 1)
+        self.assertEqual(self.database.clear_screening_cache(), 1)
+        self.assertEqual(self.database.delete_papers_for_query("query-2"), 2)
+        self.assertEqual(self.database.count_papers("query-2"), 0)
+
 
 if __name__ == "__main__":  # pragma: no cover - direct module execution helper
     unittest.main()

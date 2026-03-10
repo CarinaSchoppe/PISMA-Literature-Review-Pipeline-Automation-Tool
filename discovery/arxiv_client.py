@@ -24,7 +24,7 @@ class ArxivClient:
             "PRISMA-Literature-Review/1.0",
             extra_headers={"Accept": "application/atom+xml"},
         )
-        self.limiter = RateLimiter(calls_per_second=0.34)
+        self.limiter = RateLimiter(calls_per_second=self.config.api_settings.arxiv_calls_per_second)
 
     def search(self) -> list[PaperMetadata]:
         """Search arXiv across query variants and configured pagination windows."""

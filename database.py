@@ -291,6 +291,32 @@ class DatabaseManager:
             counts[decision] = counts.get(decision, 0) + 1
         return counts
 
+    def delete_papers_for_query(self, query_key: str) -> int:
+        """Delete all stored papers for one query key and return the affected row count."""
+
+        with self.SessionLocal() as session:
+            stmt = select(PaperRecord).where(PaperRecord.query_key == query_key)
+            records = session.scalars(stmt).all()
+            deleted_count = len(records)
+            for record in records:
+                session.delete(record)
+            session.commit()
+            return deleted_count
+
+    def clear_screening_cache(self, screening_context_key: str | None = None) -> int:
+        """Delete cached screening entries, optionally scoped to one screening context."""
+
+        with self.SessionLocal() as session:
+            stmt = select(ScreeningCacheRecord)
+            if screening_context_key:
+                stmt = stmt.where(ScreeningCacheRecord.screening_context_key == screening_context_key)
+            records = session.scalars(stmt).all()
+            deleted_count = len(records)
+            for record in records:
+                session.delete(record)
+            session.commit()
+            return deleted_count
+
     def _find_existing(self, session: Session, query_key: str, paper: PaperMetadata) -> PaperRecord | None:
         """Find an existing row by DOI first and normalized title second."""
 

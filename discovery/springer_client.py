@@ -22,7 +22,7 @@ class SpringerClient:
     def __init__(self, config: ResearchConfig) -> None:
         self.config = config
         self.session = build_session("PRISMA-Literature-Review/1.0")
-        self.limiter = RateLimiter(calls_per_second=1.0)
+        self.limiter = RateLimiter(calls_per_second=self.config.api_settings.springer_calls_per_second)
 
     def search(self) -> list[PaperMetadata]:
         """Search Springer records when an API key is configured."""

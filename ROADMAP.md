@@ -27,8 +27,11 @@ Already implemented and verified:
 - PRISMA-style flow output
 - verbose and debug logging
 - controlled stop handling
-- `99.04%` app-code coverage excluding `tests/*`
-- `99.09%` full-repository coverage including `tests/*`
+- per-source rate limiting controls
+- stage-specific worker overrides
+- pre-run query reset and screening-cache reset controls
+- `99.14%` app-code coverage excluding `tests/*`
+- `99.17%` full-repository coverage including `tests/*`
 
 ## Design Principles
 
@@ -175,13 +178,15 @@ Next GUI improvements:
 Already present:
 
 - parallel workers
+- stage-specific worker overrides
 - resume mode
 - fixture mode
 - configurable request timeout
+- per-source rate limiting controls
+- pre-run query reset and screening-cache reset controls
 
 Next performance work:
 
-- per-source rate limiting controls
 - smarter request backoff on `429`
 - persistent source-response cache
 - incremental report regeneration

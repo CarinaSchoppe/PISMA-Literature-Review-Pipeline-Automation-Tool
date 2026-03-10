@@ -46,6 +46,7 @@ class FullTextExtractionAndPDFTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             config = self._config(Path(temp_dir))
             config.api_settings.unpaywall_email = "carina@example.com"
+            config.api_settings.unpaywall_calls_per_second = 1.2
             paper = PaperMetadata(title="Example", doi="10.1000/example", source="test")
             fetcher = PDFFetcher(config)
 
@@ -57,6 +58,7 @@ class FullTextExtractionAndPDFTests(unittest.TestCase):
             self.assertEqual(enriched.pdf_link, "https://example.org/paper.pdf")
             self.assertEqual(enriched.pdf_path, "papers/example.pdf")
             self.assertTrue(enriched.open_access)
+            self.assertAlmostEqual(fetcher.limiter.min_interval, 1 / 1.2)
             download_mock.assert_called_once()
 
     def test_download_pdf_reuses_existing_file_rejects_html_and_writes_valid_pdf(self) -> None:

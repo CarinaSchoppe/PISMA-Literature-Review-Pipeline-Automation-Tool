@@ -329,6 +329,106 @@ class PipelineIntegrationTests(unittest.TestCase):
             papers = pd.read_csv(root / "results" / "papers.csv")
             self.assertEqual(len(papers), 2)
 
+    def test_citation_expansion_respects_remaining_discovery_capacity(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            fixture_path = root / "seed.json"
+            fixture_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "title": "Seed paper",
+                            "authors": ["Ada Lovelace"],
+                            "abstract": "Seed abstract",
+                            "year": 2024,
+                            "source": "fixture",
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            config = ResearchConfig(
+                research_topic="AI-assisted literature reviews",
+                search_keywords=["large language models", "screening"],
+                pages_to_retrieve=1,
+                results_per_page=10,
+                max_discovered_records=2,
+                citation_snowballing_enabled=True,
+                run_mode="collect",
+                openalex_enabled=False,
+                semantic_scholar_enabled=False,
+                crossref_enabled=False,
+                include_pubmed=False,
+                disable_progress_bars=True,
+                fixture_data_path=fixture_path,
+                data_dir=root / "data",
+                papers_dir=root / "papers",
+                results_dir=root / "results",
+                database_path=root / "data" / "literature_review.db",
+            ).finalize()
+
+            expanded = [
+                PaperMetadata(title="Expanded 1", source="fixture"),
+                PaperMetadata(title="Expanded 2", source="fixture"),
+            ]
+
+            with patch("citation.citation_expander.CitationExpander.expand", return_value=expanded):
+                result = PipelineController(config).run()
+
+            self.assertEqual(result["database_count"], 2)
+            papers = pd.read_csv(root / "results" / "papers.csv")
+            self.assertEqual(len(papers), 2)
+
+    def test_reset_query_records_and_clear_screening_cache_are_executed_before_reruns(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            base_kwargs = {
+                "research_topic": "AI-assisted literature reviews",
+                "search_keywords": ["large language models", "screening", "systematic review"],
+                "pages_to_retrieve": 1,
+                "results_per_page": 10,
+                "max_papers_to_analyze": 3,
+                "citation_snowballing_enabled": False,
+                "openalex_enabled": False,
+                "semantic_scholar_enabled": False,
+                "crossref_enabled": False,
+                "include_pubmed": False,
+                "disable_progress_bars": True,
+                "fixture_data_path": Path("tests/fixtures/offline_papers.json"),
+                "data_dir": root / "data",
+                "papers_dir": root / "papers",
+                "results_dir": root / "results",
+                "database_path": root / "data" / "literature_review.db",
+            }
+            first_config = ResearchConfig(**base_kwargs).finalize()
+            first_result = PipelineController(first_config).run()
+
+            self.assertEqual(first_result["run_status"], "completed")
+            connection = sqlite3.connect(root / "data" / "literature_review.db")
+            try:
+                cache_count = connection.execute("SELECT COUNT(*) FROM screening_cache").fetchone()[0]
+                paper_count = connection.execute("SELECT COUNT(*) FROM papers").fetchone()[0]
+            finally:
+                connection.close()
+            self.assertGreater(cache_count, 0)
+            self.assertGreater(paper_count, 0)
+
+            events: list[dict[str, object]] = []
+            rerun_config = ResearchConfig(
+                **base_kwargs,
+                reset_query_records=True,
+                clear_screening_cache=True,
+            ).finalize()
+            rerun_result = PipelineController(rerun_config, event_sink=events.append).run()
+
+            self.assertEqual(rerun_result["run_status"], "completed")
+            deleted_events = [event for event in events if event["event_type"] == "query_records_deleted"]
+            cleared_events = [event for event in events if event["event_type"] == "screening_cache_cleared"]
+            self.assertTrue(deleted_events)
+            self.assertTrue(cleared_events)
+            self.assertGreater(deleted_events[0]["deleted_count"], 0)
+            self.assertGreater(cleared_events[0]["deleted_count"], 0)
+
     def test_min_discovered_records_can_fail_run_before_screening(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)

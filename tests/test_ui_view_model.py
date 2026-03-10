@@ -29,8 +29,20 @@ class UIViewModelTests(unittest.TestCase):
                 "max_discovered_records": "120",
                 "min_discovered_records": "10",
                 "skip_discovery": True,
+                "discovery_workers": 2,
+                "io_workers": 3,
+                "screening_workers": 4,
+                "reset_query_records": True,
+                "clear_screening_cache": True,
                 "analysis_passes": "fast|huggingface_local|72|strict|8|Qwen/Qwen3-14B|0\ndeep|openai_compatible|85|triage|12|gpt-5.4|70",
                 "llm_temperature": "0.25",
+                "openalex_calls_per_second": "4.5",
+                "semantic_scholar_calls_per_second": "1.5",
+                "crossref_calls_per_second": "2.0",
+                "springer_calls_per_second": "0.8",
+                "arxiv_calls_per_second": "0.25",
+                "pubmed_calls_per_second": "2.8",
+                "unpaywall_calls_per_second": "1.2",
                 "huggingface_model": "Qwen/Qwen3-14B",
                 "gemini_model": "gemini-2.5-flash",
                 "gemini_api_key": "gem-key",
@@ -47,11 +59,23 @@ class UIViewModelTests(unittest.TestCase):
         self.assertEqual(config.max_discovered_records, 120)
         self.assertEqual(config.min_discovered_records, 10)
         self.assertTrue(config.skip_discovery)
+        self.assertEqual(config.discovery_workers, 2)
+        self.assertEqual(config.io_workers, 3)
+        self.assertEqual(config.screening_workers, 4)
+        self.assertTrue(config.reset_query_records)
+        self.assertTrue(config.clear_screening_cache)
         self.assertEqual(len(config.analysis_passes), 2)
         self.assertEqual(config.analysis_passes[0].model_name, "Qwen/Qwen3-14B")
         self.assertEqual(config.analysis_passes[1].model_name, "gpt-5.4")
         self.assertEqual(config.analysis_passes[1].min_input_score, 70.0)
         self.assertEqual(config.api_settings.llm_temperature, 0.25)
+        self.assertEqual(config.api_settings.openalex_calls_per_second, 4.5)
+        self.assertEqual(config.api_settings.semantic_scholar_calls_per_second, 1.5)
+        self.assertEqual(config.api_settings.crossref_calls_per_second, 2.0)
+        self.assertEqual(config.api_settings.springer_calls_per_second, 0.8)
+        self.assertEqual(config.api_settings.arxiv_calls_per_second, 0.25)
+        self.assertEqual(config.api_settings.pubmed_calls_per_second, 2.8)
+        self.assertEqual(config.api_settings.unpaywall_calls_per_second, 1.2)
         self.assertEqual(config.api_settings.huggingface_model, "Qwen/Qwen3-14B")
         self.assertEqual(config.api_settings.gemini_model, "gemini-2.5-flash")
         self.assertEqual(config.api_settings.gemini_api_key, "gem-key")
@@ -97,6 +121,11 @@ class UIViewModelTests(unittest.TestCase):
                     "min_input_score": 0,
                 }
             ],
+            discovery_workers=2,
+            io_workers=3,
+            screening_workers=4,
+            reset_query_records=True,
+            clear_screening_cache=True,
             include_pubmed=False,
         ).finalize()
 
@@ -106,6 +135,11 @@ class UIViewModelTests(unittest.TestCase):
         self.assertEqual(values["search_keywords"], "llm, screening")
         self.assertEqual(values["max_discovered_records"], 75)
         self.assertEqual(values["min_discovered_records"], 5)
+        self.assertEqual(values["discovery_workers"], 2)
+        self.assertEqual(values["io_workers"], 3)
+        self.assertEqual(values["screening_workers"], 4)
+        self.assertTrue(values["reset_query_records"])
+        self.assertTrue(values["clear_screening_cache"])
         self.assertIn("Qwen/Qwen3-14B", values["analysis_passes"])
 
     def test_config_payload_to_form_values_accepts_saved_json_shape(self) -> None:
@@ -115,7 +149,14 @@ class UIViewModelTests(unittest.TestCase):
             "discovery_strategy": "broad",
             "max_discovered_records": 80,
             "min_discovered_records": 4,
-            "api_settings": {"huggingface_model": "Qwen/Qwen3-14B", "gemini_model": "gemini-2.5-flash"},
+            "discovery_workers": 2,
+            "io_workers": 3,
+            "screening_workers": 4,
+            "api_settings": {
+                "huggingface_model": "Qwen/Qwen3-14B",
+                "gemini_model": "gemini-2.5-flash",
+                "openalex_calls_per_second": 4.5,
+            },
         }
 
         values = config_payload_to_form_values(payload)
@@ -125,7 +166,11 @@ class UIViewModelTests(unittest.TestCase):
         self.assertEqual(values["discovery_strategy"], "broad")
         self.assertEqual(values["max_discovered_records"], 80)
         self.assertEqual(values["min_discovered_records"], 4)
+        self.assertEqual(values["discovery_workers"], 2)
+        self.assertEqual(values["io_workers"], 3)
+        self.assertEqual(values["screening_workers"], 4)
         self.assertEqual(values["gemini_model"], "gemini-2.5-flash")
+        self.assertEqual(values["openalex_calls_per_second"], 4.5)
 
     def test_default_form_values_cover_all_runtime_config_fields(self) -> None:
         values = default_form_values()

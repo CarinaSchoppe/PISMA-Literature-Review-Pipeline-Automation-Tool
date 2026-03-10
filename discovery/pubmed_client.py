@@ -20,7 +20,7 @@ class PubMedClient:
     def __init__(self, config: ResearchConfig) -> None:
         self.config = config
         self.session = build_session("PRISMA-Literature-Review/1.0")
-        self.limiter = RateLimiter(calls_per_second=3.0)
+        self.limiter = RateLimiter(calls_per_second=self.config.api_settings.pubmed_calls_per_second)
 
     def search(self) -> list[PaperMetadata]:
         """Search PubMed when the run configuration enables the biomedical source."""

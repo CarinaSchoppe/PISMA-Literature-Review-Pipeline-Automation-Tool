@@ -92,6 +92,18 @@ class PipelineController:
             )
             self._log_verbose("Search query: %s", self.config.search_query)
             self.config.save_snapshot()
+            if self.config.reset_query_records:
+                deleted_records = self.database.delete_papers_for_query(self.config.query_key or "")
+                LOGGER.info("Deleted %s existing records for query '%s' before the run.", deleted_records, self.config.query_key)
+                self._emit_event("query_records_deleted", deleted_count=deleted_records, query_key=self.config.query_key)
+            if self.config.clear_screening_cache:
+                cleared_cache = self.database.clear_screening_cache(self.config.screening_context_key)
+                LOGGER.info("Cleared %s screening-cache entries for the current screening context.", cleared_cache)
+                self._emit_event(
+                    "screening_cache_cleared",
+                    deleted_count=cleared_cache,
+                    screening_context_key=self.config.screening_context_key,
+                )
             if self.config.skip_discovery:
                 self._emit_event("stage_started", stage="load_existing")
                 stored = self._apply_discovery_limits(self.database.get_papers_for_query(self.config.query_key or ""))
@@ -267,7 +279,7 @@ class PipelineController:
         clients = self._build_discovery_clients(allow_empty=bool(imported))
         if not clients:
             return discovered
-        with ThreadPoolExecutor(max_workers=min(self.config.max_workers, len(clients))) as executor:
+        with ThreadPoolExecutor(max_workers=min(self.config.effective_discovery_workers, len(clients))) as executor:
             self._active_executors.append(executor)
             try:
                 future_map = {
@@ -338,32 +350,12 @@ class PipelineController:
     def _enrich_with_pdfs(self, papers: list[PaperMetadata]) -> list[PaperMetadata]:
         """Resolve PDF metadata and optionally download files for discovered papers."""
 
-        enriched: list[PaperMetadata] = []
         self._log_verbose("Checking PDF availability for %s papers.", len(papers))
-        download_now = self.config.download_pdfs and self.config.pdf_download_mode == "all"
-        for paper in tqdm(
+        return self._map_papers_with_executor(
             papers,
+            self._enrich_paper_with_pdf,
             desc="PDF metadata and downloads",
-            unit="paper",
-            disable=self.config.disable_progress_bars,
-        ):
-            self._check_stop()
-            if paper.pdf_path or (paper.pdf_link and not download_now):
-                enriched.append(paper)
-                continue
-            try:
-                self._log_debug("Fetching PDF metadata for '%s'.", paper.title)
-                enriched.append(
-                    self.pdf_fetcher.fetch_for_paper(
-                        paper,
-                        download=download_now,
-                        target_dir=Path(self.config.papers_dir),
-                    )
-                )
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.warning("PDF enrichment failed for %s: %s", paper.title, exc)
-                enriched.append(paper)
-        return enriched
+        )
 
     def _download_relevant_pdfs(self, papers: list[PaperMetadata]) -> list[PaperMetadata]:
         """Download PDFs only for papers that survive final thresholding."""
@@ -376,26 +368,11 @@ class PipelineController:
             len(relevant_papers),
             self.config.relevant_pdfs_dir,
         )
-        downloaded: list[PaperMetadata] = []
-        for paper in tqdm(
-                relevant_papers,
-                desc="Relevant PDF downloads",
-                unit="paper",
-                disable=self.config.disable_progress_bars,
-        ):
-            self._check_stop()
-            try:
-                downloaded.append(
-                    self.pdf_fetcher.fetch_for_paper(
-                        paper,
-                        download=True,
-                        target_dir=Path(self.config.relevant_pdfs_dir or self.config.papers_dir),
-                    )
-                )
-            except Exception as exc:  # noqa: BLE001
-                LOGGER.warning("Relevant PDF download failed for %s: %s", paper.title, exc)
-                downloaded.append(paper)
-        return downloaded
+        return self._map_papers_with_executor(
+            relevant_papers,
+            self._download_one_relevant_pdf,
+            desc="Relevant PDF downloads",
+        )
 
     def _screen_papers(self) -> dict[str, int]:
         """Run screening passes on the highest-priority papers still requiring analysis."""
@@ -416,7 +393,11 @@ class PipelineController:
             return {"screened_count": 0, "full_text_screened_count": 0}
 
         LOGGER.info("Preparing %s papers for screening.", len(candidates))
-        prepared_candidates = [self._prepare_paper_for_screening(paper) for paper in candidates]
+        prepared_candidates = self._map_papers_with_executor(
+            candidates,
+            self._prepare_paper_for_screening,
+            desc="Screening preparation",
+        )
         full_text_screened_count = len(
             [paper for paper in prepared_candidates if paper.raw_payload.get("full_text_excerpt")]
         )
@@ -698,7 +679,7 @@ class PipelineController:
 
         if self._requires_local_llm_serial_execution():
             return 1
-        return self.config.max_workers
+        return self.config.effective_screening_workers
 
     def _paper_meets_pdf_download_threshold(self, paper: PaperMetadata) -> bool:
         if paper.relevance_score is None:
@@ -710,6 +691,91 @@ class PipelineController:
         if resolved_passes:
             return resolved_passes[-1].threshold
         return self.config.relevance_threshold
+
+    def _enrich_paper_with_pdf(self, paper: PaperMetadata) -> PaperMetadata:
+        """Resolve PDF metadata and optional downloads for one paper without aborting the whole batch."""
+
+        self._check_stop()
+        download_now = self.config.download_pdfs and self.config.pdf_download_mode == "all"
+        if paper.pdf_path or (paper.pdf_link and not download_now):
+            return paper
+        try:
+            self._log_debug("Fetching PDF metadata for '%s'.", paper.title)
+            return self.pdf_fetcher.fetch_for_paper(
+                paper,
+                download=download_now,
+                target_dir=Path(self.config.papers_dir),
+            )
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("PDF enrichment failed for %s: %s", paper.title, exc)
+            return paper
+
+    def _download_one_relevant_pdf(self, paper: PaperMetadata) -> PaperMetadata:
+        """Download the PDF for one retained paper while keeping per-paper failures non-fatal."""
+
+        self._check_stop()
+        try:
+            return self.pdf_fetcher.fetch_for_paper(
+                paper,
+                download=True,
+                target_dir=Path(self.config.relevant_pdfs_dir or self.config.papers_dir),
+            )
+        except Exception as exc:  # noqa: BLE001
+            LOGGER.warning("Relevant PDF download failed for %s: %s", paper.title, exc)
+            return paper
+
+    def _map_papers_with_executor(
+        self,
+        papers: list[PaperMetadata],
+        worker: Callable[[PaperMetadata], PaperMetadata],
+        *,
+        desc: str,
+    ) -> list[PaperMetadata]:
+        """Process a paper batch in parallel when useful while preserving the original order."""
+
+        if not papers:
+            return []
+        worker_count = self._parallel_worker_count(len(papers))
+        if worker_count == 1:
+            return [
+                worker(paper)
+                for paper in tqdm(
+                    papers,
+                    desc=desc,
+                    unit="paper",
+                    disable=self.config.disable_progress_bars,
+                )
+            ]
+
+        self._log_verbose("%s is using %s worker threads.", desc, worker_count)
+        ordered_results: list[PaperMetadata | None] = [None] * len(papers)
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            self._active_executors.append(executor)
+            try:
+                future_map = {
+                    executor.submit(worker, paper): index
+                    for index, paper in enumerate(papers)
+                }
+                for future in tqdm(
+                    as_completed(future_map),
+                    total=len(future_map),
+                    desc=desc,
+                    unit="paper",
+                    disable=self.config.disable_progress_bars,
+                ):
+                    self._check_stop()
+                    ordered_results[future_map[future]] = future.result()
+            finally:
+                if executor in self._active_executors:
+                    self._active_executors.remove(executor)
+        return [result if result is not None else paper for result, paper in zip(ordered_results, papers)]
+
+    def _parallel_worker_count(self, item_count: int) -> int:
+        """Return a bounded thread count for IO-bound per-paper stages."""
+
+        if item_count <= 1:
+            return 1
+        return max(1, min(self.config.effective_io_workers, item_count))
 
     def _log_verbose(self, message: str, *args: Any) -> None:
         if self.config.verbosity in {"verbose", "debug"}:

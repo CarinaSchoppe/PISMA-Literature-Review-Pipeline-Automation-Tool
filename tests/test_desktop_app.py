@@ -37,6 +37,8 @@ class DesktopWorkbenchTests(unittest.TestCase):
         self.assertIn("Semantic Scholar", self.workbench._help_text_for_field("semantic_scholar_enabled"))
         self.assertIn("temperature", self.workbench._help_text_for_field("llm_temperature").lower())
         self.assertIn("Gemini", self.workbench._help_text_for_field("gemini_model"))
+        self.assertIn("rate", self.workbench._help_text_for_field("semantic_scholar_calls_per_second").lower())
+        self.assertIn("cache", self.workbench._help_text_for_field("clear_screening_cache").lower())
 
     def test_output_labels_are_explicit_in_settings_ui(self) -> None:
         self.assertEqual(self.workbench.LABELS["boolean_operators"], "Boolean operators")
@@ -47,6 +49,9 @@ class DesktopWorkbenchTests(unittest.TestCase):
         self.assertEqual(self.workbench.LABELS["database_path"], "Main SQLite database path")
         self.assertEqual(self.workbench.LABELS["results_dir"], "Results directory")
         self.assertEqual(self.workbench.LABELS["gemini_model"], "Gemini model")
+        self.assertEqual(self.workbench.LABELS["discovery_workers"], "Discovery workers")
+        self.assertEqual(self.workbench.LABELS["reset_query_records"], "Reset stored query records")
+        self.assertEqual(self.workbench.LABELS["openalex_calls_per_second"], "OpenAlex calls / second")
 
     def test_gui_covers_all_runtime_fields_and_toolbar_actions(self) -> None:
         config_fields = set(ResearchConfig.model_fields.keys()) - {"api_settings", "query_key"}
@@ -101,8 +106,15 @@ class DesktopWorkbenchTests(unittest.TestCase):
         self.assertEqual(self.workbench.field_widget_types["run_mode"], "radiogroup")
         self.assertEqual(self.workbench.field_widget_types["verbosity"], "radiogroup")
         self.assertEqual(self.workbench.field_widget_types["pages_to_retrieve"], "spinbox")
+        self.assertEqual(self.workbench.field_widget_types["discovery_workers"], "spinbox")
+        self.assertEqual(self.workbench.field_widget_types["io_workers"], "spinbox")
+        self.assertEqual(self.workbench.field_widget_types["screening_workers"], "spinbox")
+        self.assertEqual(self.workbench.field_widget_types["openalex_calls_per_second"], "float_spinbox")
+        self.assertEqual(self.workbench.field_widget_types["semantic_scholar_calls_per_second"], "float_spinbox")
         self.assertEqual(self.workbench.field_widget_types["database_path"], "path")
         self.assertEqual(self.workbench.field_widget_types["download_pdfs"], "checkbutton")
+        self.assertEqual(self.workbench.field_widget_types["reset_query_records"], "checkbutton")
+        self.assertEqual(self.workbench.field_widget_types["clear_screening_cache"], "checkbutton")
         self.assertEqual(self.workbench.field_widget_types["analysis_passes"], "pass_builder")
         self.assertEqual(str(self.workbench.text_widgets["analysis_passes"].cget("state")), "disabled")
 
@@ -206,6 +218,7 @@ class DesktopWorkbenchTests(unittest.TestCase):
         self.assertIn("Where CSV, JSON, SQLite, and PDFs go", guide_titles)
         self.assertIn("Where API keys and endpoint settings go", guide_titles)
         self.assertIn("How to make the run fully verbose", guide_titles)
+        self.assertIn("How worker threads, cache resets, and reruns work", guide_titles)
         self.assertIn("What Start Run, Analyze Stored Results, and Force Stop do", guide_titles)
         self.assertIsNotNone(self.workbench.handbook_tree)
 

@@ -12,6 +12,7 @@ from discovery.crossref_client import CrossrefClient
 from discovery.openalex_client import OpenAlexClient
 from discovery.pubmed_client import PubMedClient
 from discovery.semantic_scholar_client import SemanticScholarClient
+from discovery.springer_client import SpringerClient
 from models.paper import PaperMetadata
 
 
@@ -225,6 +226,29 @@ class DiscoveryClientsExtendedTests(unittest.TestCase):
 
         self.assertEqual(client.session.headers["x-api-key"], "sem-key")
         self.assertEqual(len(results), config.per_source_limit)
+
+    def test_clients_pick_up_configured_rate_limits(self) -> None:
+        tuned = self.config.model_copy(
+            update={
+                "api_settings": self.config.api_settings.model_copy(
+                    update={
+                        "openalex_calls_per_second": 4.5,
+                        "semantic_scholar_calls_per_second": 1.5,
+                        "crossref_calls_per_second": 2.0,
+                        "springer_calls_per_second": 0.8,
+                        "arxiv_calls_per_second": 0.25,
+                        "pubmed_calls_per_second": 2.8,
+                    }
+                )
+            }
+        )
+
+        self.assertAlmostEqual(OpenAlexClient(tuned).limiter.min_interval, 1 / 4.5)
+        self.assertAlmostEqual(SemanticScholarClient(tuned).limiter.min_interval, 1 / 1.5)
+        self.assertAlmostEqual(CrossrefClient(tuned).limiter.min_interval, 1 / 2.0)
+        self.assertAlmostEqual(SpringerClient(tuned).limiter.min_interval, 1 / 0.8)
+        self.assertAlmostEqual(ArxivClient(tuned).limiter.min_interval, 1 / 0.25)
+        self.assertAlmostEqual(PubMedClient(tuned).limiter.min_interval, 1 / 2.8)
 
     def test_pubmed_search_and_xml_parsing(self) -> None:
         client = PubMedClient(self.config)

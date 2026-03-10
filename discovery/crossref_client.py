@@ -19,7 +19,7 @@ class CrossrefClient:
     def __init__(self, config: ResearchConfig) -> None:
         self.config = config
         self.session = build_session("PRISMA-Literature-Review/1.0")
-        self.limiter = RateLimiter(calls_per_second=2.5)
+        self.limiter = RateLimiter(calls_per_second=self.config.api_settings.crossref_calls_per_second)
 
     def search(self) -> list[PaperMetadata]:
         """Search Crossref across configured query variants and page windows."""

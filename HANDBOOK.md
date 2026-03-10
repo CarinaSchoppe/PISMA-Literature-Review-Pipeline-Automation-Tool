@@ -477,9 +477,22 @@ What the SQLite files mean:
 
 `max_workers`
 
-- Parallel worker count used for discovery and screening orchestration.
+- Parallel worker count used for discovery, PDF/network enrichment, relevant-PDF downloads, screening preparation, and screening orchestration.
 - GUI: `Runtime and Logs`
 - CLI: `--max-workers`
+
+`discovery_workers`, `io_workers`, `screening_workers`
+
+- Optional per-stage worker overrides.
+- `0` means "inherit `max_workers`".
+- `discovery_workers` tunes source-query concurrency.
+- `io_workers` tunes PDF enrichment, PDF download, and full-text preparation concurrency.
+- `screening_workers` tunes AI-screening concurrency unless a local Hugging Face path forces serial execution.
+- GUI: `Runtime and Logs`
+- CLI:
+  - `--discovery-workers`
+  - `--io-workers`
+  - `--screening-workers`
 
 `request_timeout_seconds`
 
@@ -492,6 +505,20 @@ What the SQLite files mean:
 - Reuse screening cache and skip repeated work for the same context.
 - GUI: `Runtime and Logs`
 - CLI: `--resume-mode`
+
+`reset_query_records`
+
+- Delete previously stored paper rows for the active query before the run starts.
+- Useful when you want to rebuild the discovery set from scratch instead of merging into prior records.
+- GUI: `Runtime and Logs`
+- CLI: `--reset-query-records`
+
+`clear_screening_cache`
+
+- Delete cached screening decisions for the active screening context before the run starts.
+- Useful when criteria, thresholds, prompts, or model choices changed and you want fresh scoring.
+- GUI: `Runtime and Logs`
+- CLI: `--clear-screening-cache`
 
 `disable_progress_bars`
 
@@ -517,6 +544,18 @@ These toggles are especially useful when diagnosing:
 - prompt formatting issues
 - model-response parsing issues
 - why a paper was kept or rejected
+
+Per-source request throttling:
+
+- `openalex_calls_per_second` -> `--openalex-calls-per-second`
+- `semantic_scholar_calls_per_second` -> `--semantic-scholar-calls-per-second`
+- `crossref_calls_per_second` -> `--crossref-calls-per-second`
+- `springer_calls_per_second` -> `--springer-calls-per-second`
+- `arxiv_calls_per_second` -> `--arxiv-calls-per-second`
+- `pubmed_calls_per_second` -> `--pubmed-calls-per-second`
+- `unpaywall_calls_per_second` -> `--unpaywall-calls-per-second`
+
+These live in the GUI on the `Discovery` page and let you slow only the provider that is rate-limiting instead of slowing the entire run.
 
 ## Outputs
 
@@ -598,9 +637,9 @@ GUI stop feels delayed:
 
 Current verified baseline:
 
-- `156` tests passing
-- `99.04%` app-code coverage excluding `tests/*`
-- `99.09%` full-repository coverage including `tests/*`
+- `163` tests passing
+- `99.14%` app-code coverage excluding `tests/*`
+- `99.17%` full-repository coverage including `tests/*`
 - `ruff` clean
 - `compileall` clean
 

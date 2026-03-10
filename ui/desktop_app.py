@@ -141,8 +141,21 @@ class DesktopWorkbench:
         "max_papers_to_analyze": {"from_": 1, "to": 10000, "increment": 1},
         "full_text_max_chars": {"from_": 500, "to": 200000, "increment": 500},
         "max_workers": {"from_": 1, "to": 64, "increment": 1},
+        "discovery_workers": {"from_": 0, "to": 64, "increment": 1},
+        "io_workers": {"from_": 0, "to": 64, "increment": 1},
+        "screening_workers": {"from_": 0, "to": 64, "increment": 1},
         "request_timeout_seconds": {"from_": 1, "to": 600, "increment": 1},
         "huggingface_max_new_tokens": {"from_": 16, "to": 4096, "increment": 16},
+    }
+
+    FLOAT_SPINBOX_FIELDS = {
+        "openalex_calls_per_second": {"from_": 0.0, "to": 20.0, "increment": 0.1},
+        "semantic_scholar_calls_per_second": {"from_": 0.0, "to": 20.0, "increment": 0.1},
+        "crossref_calls_per_second": {"from_": 0.0, "to": 20.0, "increment": 0.1},
+        "springer_calls_per_second": {"from_": 0.0, "to": 10.0, "increment": 0.1},
+        "arxiv_calls_per_second": {"from_": 0.0, "to": 5.0, "increment": 0.01},
+        "pubmed_calls_per_second": {"from_": 0.0, "to": 20.0, "increment": 0.1},
+        "unpaywall_calls_per_second": {"from_": 0.0, "to": 10.0, "increment": 0.1},
     }
 
     SECRET_FIELDS = {
@@ -191,6 +204,13 @@ class DesktopWorkbench:
                 "manual_source_path",
                 "google_scholar_import_path",
                 "researchgate_import_path",
+                "openalex_calls_per_second",
+                "semantic_scholar_calls_per_second",
+                "crossref_calls_per_second",
+                "springer_calls_per_second",
+                "arxiv_calls_per_second",
+                "pubmed_calls_per_second",
+                "unpaywall_calls_per_second",
             ],
         ),
         (
@@ -247,8 +267,13 @@ class DesktopWorkbench:
                 "run_mode",
                 "verbosity",
                 "max_workers",
+                "discovery_workers",
+                "io_workers",
+                "screening_workers",
                 "request_timeout_seconds",
                 "resume_mode",
+                "reset_query_records",
+                "clear_screening_cache",
                 "disable_progress_bars",
                 "title_similarity_threshold",
                 "log_http_requests",
@@ -327,13 +352,25 @@ class DesktopWorkbench:
         "run_mode": "Run mode",
         "verbosity": "Verbosity level",
         "max_workers": "Parallel workers",
+        "discovery_workers": "Discovery workers",
+        "io_workers": "PDF and IO workers",
+        "screening_workers": "Screening workers",
         "resume_mode": "Resume previous screening",
+        "reset_query_records": "Reset stored query records",
+        "clear_screening_cache": "Clear screening cache",
         "disable_progress_bars": "Disable progress bars",
         "log_http_requests": "Log HTTP requests",
         "log_http_payloads": "Log HTTP payloads",
         "log_llm_prompts": "Log LLM prompts",
         "log_llm_responses": "Log LLM responses",
         "log_screening_decisions": "Log screening decisions",
+        "openalex_calls_per_second": "OpenAlex calls / second",
+        "semantic_scholar_calls_per_second": "Semantic Scholar calls / second",
+        "crossref_calls_per_second": "Crossref calls / second",
+        "springer_calls_per_second": "Springer calls / second",
+        "arxiv_calls_per_second": "arXiv calls / second",
+        "pubmed_calls_per_second": "PubMed calls / second",
+        "unpaywall_calls_per_second": "Unpaywall calls / second",
         "huggingface_trust_remote_code": "Trust HF remote code",
     }
 
@@ -396,7 +433,17 @@ class DesktopWorkbench:
             "Why Semantic Scholar shows 429 rate limits",
             "A 429 means the remote API refused additional requests for a while. That is usually a provider-side "
             "limit, not a crash in your pipeline. To reduce pressure, lower pages per source or results per page, "
-            "disable the source temporarily, or supply a provider API key when supported.",
+            "disable the source temporarily, or supply a provider API key when supported. You can also tune the "
+            "per-source calls-per-second controls in the Discovery page to slow only the provider that is rate-limiting.",
+        ),
+        "guide:runtime_tuning": (
+            "Guide",
+            "How worker threads, cache resets, and reruns work",
+            "Use the 'Execution and Logging' page to control concurrency and rerun behavior. 'Parallel workers' is "
+            "the global fallback. 'Discovery workers', 'PDF and IO workers', and 'Screening workers' optionally override "
+            "that fallback per stage; set them to 0 to inherit the global worker count. 'Reset stored query records' "
+            "deletes the current query's paper rows before the run starts, and 'Clear screening cache' deletes cached "
+            "AI decisions for the current screening context so papers are rescored from scratch.",
         ),
         "guide:actions": (
             "Guide",
@@ -636,8 +683,27 @@ class DesktopWorkbench:
         ),
         "max_workers": "Maximum worker threads used for parallel API discovery and other concurrent tasks.",
         "request_timeout_seconds": "Network timeout applied to external API requests.",
+        "discovery_workers": (
+            "Optional worker-thread override for discovery. Set this to 0 to inherit the global parallel-worker count."
+        ),
+        "io_workers": (
+            "Optional worker-thread override for PDF enrichment, downloads, and other IO-heavy paper preparation steps. "
+            "Set this to 0 to inherit the global parallel-worker count."
+        ),
+        "screening_workers": (
+            "Optional worker-thread override for AI screening. Set this to 0 to inherit the global parallel-worker count. "
+            "Local Hugging Face passes may still force this stage to run serially for safety."
+        ),
         "resume_mode": (
             "Reuse prior database state so interrupted runs can continue instead of repeating already completed work."
+        ),
+        "reset_query_records": (
+            "Delete previously stored paper rows for the current query before the run begins. This is useful when you want "
+            "to rebuild the query result set from scratch instead of merging into earlier records."
+        ),
+        "clear_screening_cache": (
+            "Delete cached screening results for the current review context before the run starts. Use this when you changed "
+            "criteria, prompts, thresholds, or model choices and want papers rescored from scratch."
         ),
         "disable_progress_bars": "Turn off progress bars when you prefer a cleaner console or log view.",
         "title_similarity_threshold": (
@@ -659,6 +725,27 @@ class DesktopWorkbench:
         ),
         "unpaywall_email": (
             "Contact email required by Unpaywall when checking for open-access PDFs."
+        ),
+        "openalex_calls_per_second": (
+            "Maximum request rate for OpenAlex. Lower this if you need gentler traffic; set it to 0 to disable local throttling."
+        ),
+        "semantic_scholar_calls_per_second": (
+            "Maximum request rate for Semantic Scholar. Lowering this is the main GUI control to reduce 429 rate-limit errors."
+        ),
+        "crossref_calls_per_second": (
+            "Maximum request rate for Crossref. Lower this if you want slower, more conservative discovery behavior."
+        ),
+        "springer_calls_per_second": (
+            "Maximum request rate for Springer Nature API calls."
+        ),
+        "arxiv_calls_per_second": (
+            "Maximum request rate for arXiv API calls. The default is conservative because arXiv asks clients to keep request volume low."
+        ),
+        "pubmed_calls_per_second": (
+            "Maximum request rate for PubMed API calls."
+        ),
+        "unpaywall_calls_per_second": (
+            "Maximum request rate for Unpaywall open-access lookups when resolving or downloading PDFs."
         ),
     }
 
@@ -922,6 +1009,8 @@ class DesktopWorkbench:
             self._render_combobox_field(frame, field_name, help_text, row)
         elif field_name in self.SPINBOX_FIELDS:
             self._render_spinbox_field(frame, field_name, help_text, row)
+        elif field_name in self.FLOAT_SPINBOX_FIELDS:
+            self._render_float_spinbox_field(frame, field_name, help_text, row)
         elif field_name in self.PATH_FIELD_MODES:
             self._render_path_field(frame, field_name, help_text, row)
         else:
@@ -1054,6 +1143,25 @@ class DesktopWorkbench:
         self.field_widget_types[field_name] = "spinbox"
         self._bind_hover_help(widget, help_text)
 
+    def _render_float_spinbox_field(self, frame: ttk.LabelFrame, field_name: str, help_text: str, row: int) -> None:
+        """Render bounded float settings as spinboxes with fixed increments."""
+
+        spinbox_config = self.FLOAT_SPINBOX_FIELDS[field_name]
+        variable = tk.DoubleVar(value=float(SCALAR_FIELD_DEFAULTS.get(field_name, spinbox_config["from_"])))
+        widget = ttk.Spinbox(
+            frame,
+            from_=spinbox_config["from_"],
+            to=spinbox_config["to"],
+            increment=spinbox_config["increment"],
+            textvariable=variable,
+        )
+        widget.grid(row=row, column=1, sticky="ew", padx=4, pady=4)
+        self.scalar_vars[field_name] = variable
+        self.field_input_widgets[field_name] = widget
+        self.field_focus_widgets[field_name] = widget
+        self.field_widget_types[field_name] = "float_spinbox"
+        self._bind_hover_help(widget, help_text)
+
     def _render_path_field(self, frame: ttk.LabelFrame, field_name: str, help_text: str, row: int) -> None:
         """Render filesystem paths with an entry plus a browse button."""
 
@@ -1144,6 +1252,7 @@ class DesktopWorkbench:
             ("Jump to Thresholds", lambda: self._focus_field("relevance_threshold")),
             ("Jump to Outputs", lambda: self._focus_field("output_csv")),
             ("Jump to Storage Paths", lambda: self._focus_field("database_path")),
+            ("Jump to Runtime Tuning", lambda: self._focus_field("max_workers")),
             ("Jump to Logging", lambda: self._focus_field("verbosity")),
             ("Edit Pass Chain", self._open_pass_builder),
         ]
@@ -1158,6 +1267,7 @@ class DesktopWorkbench:
             ("Open Model Guide", lambda: self._open_handbook_entry("guide:models")),
             ("Open Output Guide", lambda: self._open_handbook_entry("guide:outputs")),
             ("Open API Guide", lambda: self._open_handbook_entry("guide:api_keys")),
+            ("Open Runtime Guide", lambda: self._open_handbook_entry("guide:runtime_tuning")),
             ("Open Actions Guide", lambda: self._open_handbook_entry("guide:actions")),
         ]
         for text, command in guide_buttons:
@@ -1449,6 +1559,10 @@ class DesktopWorkbench:
             f"SQLite exports: {'on' if values.get('output_sqlite_exports') else 'off'} -> {results_dir / 'included_papers.db'}",
             f"PDF downloads: {'on' if values.get('download_pdfs') else 'off'} | mode={pdf_mode}",
             f"Main PDF folder: {papers_dir}",
+            (
+                f"Workers: global {values.get('max_workers')} | discovery {values.get('discovery_workers')} "
+                f"| io {values.get('io_workers')} | screening {values.get('screening_workers')}"
+            ),
         ]
         if pdf_mode == "relevant_only":
             folder_mode = "same folder" if relevant_dir == papers_dir else "separate relevant folder"

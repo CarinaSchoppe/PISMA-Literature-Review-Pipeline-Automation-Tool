@@ -34,9 +34,9 @@ input -> discovery -> deduplication -> database storage -> citation expansion ->
 
 The repository is maintained with a tested baseline of:
 
-- `156` passing tests
-- `99.04%` app-code coverage excluding `tests/*`
-- `99.09%` full-repository coverage including `tests/*`
+- `163` passing tests
+- `99.14%` app-code coverage excluding `tests/*`
+- `99.17%` full-repository coverage including `tests/*`
 - clean `ruff` lint
 - clean `compileall`
 
@@ -137,6 +137,7 @@ That includes:
 
 - discovery source toggles
 - discovery breadth and result limits
+- per-source API rate limits
 - min/max discovery gates
 - thresholds and decision mode
 - pass-chain setup
@@ -145,6 +146,8 @@ That includes:
 - PDF download behavior
 - CSV/JSON/Markdown/SQLite export switches
 - path selection for state, outputs, PDFs, and database files
+- stage-specific worker overrides
+- reset-query and clear-cache rerun controls
 - logging and verbosity controls
 - resume and progress-bar controls
 
@@ -214,7 +217,9 @@ project_root/
 - structured verbose and debug logging
 - profile save/load in the GUI
 - deterministic offline fixture mode for testing
-- multi-threaded discovery and screening orchestration
+- multi-threaded discovery, PDF/network enrichment, screening preparation, and screening orchestration
+- per-source API throttling and stage-specific worker overrides
+- pre-run query reset and screening-cache reset controls
 
 ## Installation
 
@@ -399,6 +404,7 @@ The main SQLite database stores:
 Discovery:
 
 - source toggles for OpenAlex, Semantic Scholar, Crossref, Springer, arXiv, and PubMed
+- per-source rate limits for OpenAlex, Semantic Scholar, Crossref, Springer, arXiv, PubMed, and Unpaywall
 - `pages_to_retrieve`
 - `results_per_page`
 - `max_discovered_records`
@@ -437,14 +443,21 @@ Runtime and logging:
 - `run_mode`
 - `verbosity`
 - `max_workers`
+- `discovery_workers`
+- `io_workers`
+- `screening_workers`
 - `request_timeout_seconds`
 - `resume_mode`
+- `reset_query_records`
+- `clear_screening_cache`
 - `disable_progress_bars`
 - `log_http_requests`
 - `log_http_payloads`
 - `log_llm_prompts`
 - `log_llm_responses`
 - `log_screening_decisions`
+
+`max_workers` controls the global thread-pool fallback. `discovery_workers`, `io_workers`, and `screening_workers` can override that fallback per stage, and `0` means "inherit the global value".
 
 ## Error Handling And Stop Behavior
 

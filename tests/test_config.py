@@ -138,6 +138,20 @@ class ConfigTests(unittest.TestCase):
                 "openai-key",
                 "--openai-model",
                 "gpt-5.4",
+                "--openalex-calls-per-second",
+                "4.5",
+                "--semantic-scholar-calls-per-second",
+                "1.5",
+                "--crossref-calls-per-second",
+                "2.0",
+                "--springer-calls-per-second",
+                "0.8",
+                "--arxiv-calls-per-second",
+                "0.25",
+                "--pubmed-calls-per-second",
+                "2.8",
+                "--unpaywall-calls-per-second",
+                "1.2",
                 "--gemini-api-key",
                 "gemini-key",
                 "--gemini-base-url",
@@ -154,6 +168,16 @@ class ConfigTests(unittest.TestCase):
                 "openai/gpt-oss-20b",
                 "--huggingface-max-new-tokens",
                 "512",
+                "--max-workers",
+                "6",
+                "--discovery-workers",
+                "2",
+                "--io-workers",
+                "3",
+                "--screening-workers",
+                "4",
+                "--reset-query-records",
+                "--clear-screening-cache",
                 "--google-scholar-import-path",
                 "tests/fixtures/google_scholar_import.json",
                 "--researchgate-import-path",
@@ -190,6 +214,13 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.api_settings.springer_api_key, "springer-key")
         self.assertEqual(config.api_settings.openai_api_key, "openai-key")
         self.assertEqual(config.api_settings.openai_model, "gpt-5.4")
+        self.assertEqual(config.api_settings.openalex_calls_per_second, 4.5)
+        self.assertEqual(config.api_settings.semantic_scholar_calls_per_second, 1.5)
+        self.assertEqual(config.api_settings.crossref_calls_per_second, 2.0)
+        self.assertEqual(config.api_settings.springer_calls_per_second, 0.8)
+        self.assertEqual(config.api_settings.arxiv_calls_per_second, 0.25)
+        self.assertEqual(config.api_settings.pubmed_calls_per_second, 2.8)
+        self.assertEqual(config.api_settings.unpaywall_calls_per_second, 1.2)
         self.assertEqual(config.api_settings.gemini_api_key, "gemini-key")
         self.assertEqual(config.api_settings.gemini_base_url, "https://generativelanguage.googleapis.com/v1beta")
         self.assertEqual(config.api_settings.gemini_model, "gemini-2.5-flash")
@@ -202,6 +233,12 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.max_discovered_records, 250)
         self.assertEqual(config.min_discovered_records, 20)
         self.assertTrue(config.skip_discovery)
+        self.assertEqual(config.max_workers, 6)
+        self.assertEqual(config.discovery_workers, 2)
+        self.assertEqual(config.io_workers, 3)
+        self.assertEqual(config.screening_workers, 4)
+        self.assertTrue(config.reset_query_records)
+        self.assertTrue(config.clear_screening_cache)
         self.assertTrue(config.download_pdfs)
         self.assertEqual(config.pdf_download_mode, "relevant_only")
         self.assertTrue(config.log_http_requests)

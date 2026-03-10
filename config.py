@@ -65,6 +65,31 @@ class ApiSettings(BaseModel):
         default_factory=lambda: os.getenv("HF_TRUST_REMOTE_CODE", "false").strip().lower() in {"1", "true", "yes", "y"}
     )
     llm_temperature: float = Field(default_factory=lambda: float(os.getenv("LLM_TEMPERATURE", "0.1")))
+    openalex_calls_per_second: float = Field(default_factory=lambda: float(os.getenv("OPENALEX_CALLS_PER_SECOND", "5.0")))
+    semantic_scholar_calls_per_second: float = Field(
+        default_factory=lambda: float(os.getenv("SEMANTIC_SCHOLAR_CALLS_PER_SECOND", "3.0"))
+    )
+    crossref_calls_per_second: float = Field(default_factory=lambda: float(os.getenv("CROSSREF_CALLS_PER_SECOND", "2.5")))
+    springer_calls_per_second: float = Field(default_factory=lambda: float(os.getenv("SPRINGER_CALLS_PER_SECOND", "1.0")))
+    arxiv_calls_per_second: float = Field(default_factory=lambda: float(os.getenv("ARXIV_CALLS_PER_SECOND", "0.34")))
+    pubmed_calls_per_second: float = Field(default_factory=lambda: float(os.getenv("PUBMED_CALLS_PER_SECOND", "3.0")))
+    unpaywall_calls_per_second: float = Field(default_factory=lambda: float(os.getenv("UNPAYWALL_CALLS_PER_SECOND", "2.0")))
+
+    @field_validator(
+        "llm_temperature",
+        "openalex_calls_per_second",
+        "semantic_scholar_calls_per_second",
+        "crossref_calls_per_second",
+        "springer_calls_per_second",
+        "arxiv_calls_per_second",
+        "pubmed_calls_per_second",
+        "unpaywall_calls_per_second",
+    )
+    @classmethod
+    def validate_non_negative_float(cls, value: float) -> float:
+        """Clamp float tuning parameters to non-negative values."""
+
+        return max(float(value), 0.0)
 
 
 class AnalysisPassConfig(BaseModel):
@@ -140,8 +165,13 @@ class ResearchConfig(BaseModel):
     arxiv_enabled: bool = False
     include_pubmed: bool | None = None
     max_workers: int = 4
+    discovery_workers: int = 0
+    io_workers: int = 0
+    screening_workers: int = 0
     request_timeout_seconds: int = 30
     resume_mode: bool = True
+    reset_query_records: bool = False
+    clear_screening_cache: bool = False
     disable_progress_bars: bool = False
     title_similarity_threshold: float = 0.92
     log_http_requests: bool = True
@@ -244,6 +274,15 @@ class ResearchConfig(BaseModel):
 
         if int(value) < 1:
             raise ValueError("Configuration value must be at least 1")
+        return int(value)
+
+    @field_validator("discovery_workers", "io_workers", "screening_workers")
+    @classmethod
+    def validate_non_negative_worker_ints(cls, value: int) -> int:
+        """Allow stage-specific worker overrides where zero means inherit the global worker count."""
+
+        if int(value) < 0:
+            raise ValueError("Worker override values must be at least 0")
         return int(value)
 
     @field_validator("title_similarity_threshold")
@@ -384,6 +423,24 @@ class ResearchConfig(BaseModel):
             json.dumps([analysis_pass.model_dump(mode="json") for analysis_pass in self.resolved_analysis_passes]),
         ]
         return make_query_key("|".join(components), [], self.year_range_start, self.year_range_end)
+
+    @property
+    def effective_discovery_workers(self) -> int:
+        """Return the worker count used for discovery-stage parallelism."""
+
+        return self.discovery_workers or self.max_workers
+
+    @property
+    def effective_io_workers(self) -> int:
+        """Return the worker count used for IO-heavy paper stages such as PDF enrichment."""
+
+        return self.io_workers or self.max_workers
+
+    @property
+    def effective_screening_workers(self) -> int:
+        """Return the worker count used for AI-screening parallelism before provider-specific caps."""
+
+        return self.screening_workers or self.max_workers
 
     def finalize(self) -> "ResearchConfig":
         """Resolve derived values and ensure the configured output directories exist."""
@@ -625,6 +682,13 @@ class ResearchConfig(BaseModel):
                 "huggingface_cache_dir": getattr(args, "huggingface_cache_dir", None),
                 "huggingface_trust_remote_code": getattr(args, "huggingface_trust_remote_code", None),
                 "llm_temperature": getattr(args, "llm_temperature", None),
+                "openalex_calls_per_second": getattr(args, "openalex_calls_per_second", None),
+                "semantic_scholar_calls_per_second": getattr(args, "semantic_scholar_calls_per_second", None),
+                "crossref_calls_per_second": getattr(args, "crossref_calls_per_second", None),
+                "springer_calls_per_second": getattr(args, "springer_calls_per_second", None),
+                "arxiv_calls_per_second": getattr(args, "arxiv_calls_per_second", None),
+                "pubmed_calls_per_second": getattr(args, "pubmed_calls_per_second", None),
+                "unpaywall_calls_per_second": getattr(args, "unpaywall_calls_per_second", None),
             }.items()
             if value is not None
         }
@@ -692,8 +756,17 @@ class ResearchConfig(BaseModel):
             arxiv_enabled=value_for("arxiv_enabled", getattr(args, "arxiv_enabled", None), False),
             include_pubmed=include_pubmed,
             max_workers=value_for("max_workers", args.max_workers, 4),
+            discovery_workers=value_for("discovery_workers", getattr(args, "discovery_workers", None), 0),
+            io_workers=value_for("io_workers", getattr(args, "io_workers", None), 0),
+            screening_workers=value_for("screening_workers", getattr(args, "screening_workers", None), 0),
             request_timeout_seconds=value_for("request_timeout_seconds", args.request_timeout_seconds, 30),
             resume_mode=value_for("resume_mode", args.resume_mode, True),
+            reset_query_records=value_for("reset_query_records", getattr(args, "reset_query_records", None), False),
+            clear_screening_cache=value_for(
+                "clear_screening_cache",
+                getattr(args, "clear_screening_cache", None),
+                False,
+            ),
             disable_progress_bars=value_for("disable_progress_bars", args.disable_progress_bars, False),
             title_similarity_threshold=value_for(
                 "title_similarity_threshold",
@@ -896,6 +969,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--openai-api-key", help="API key for OpenAI-compatible endpoints")
     parser.add_argument("--openai-base-url", help="OpenAI-compatible base URL")
     parser.add_argument("--openai-model", help="OpenAI model name, default gpt-5.4")
+    parser.add_argument("--openalex-calls-per-second", type=float, dest="openalex_calls_per_second", help="Rate limit for OpenAlex requests")
+    parser.add_argument(
+        "--semantic-scholar-calls-per-second",
+        type=float,
+        dest="semantic_scholar_calls_per_second",
+        help="Rate limit for Semantic Scholar requests",
+    )
+    parser.add_argument("--crossref-calls-per-second", type=float, dest="crossref_calls_per_second", help="Rate limit for Crossref requests")
+    parser.add_argument("--springer-calls-per-second", type=float, dest="springer_calls_per_second", help="Rate limit for Springer requests")
+    parser.add_argument("--arxiv-calls-per-second", type=float, dest="arxiv_calls_per_second", help="Rate limit for arXiv requests")
+    parser.add_argument("--pubmed-calls-per-second", type=float, dest="pubmed_calls_per_second", help="Rate limit for PubMed requests")
+    parser.add_argument("--unpaywall-calls-per-second", type=float, dest="unpaywall_calls_per_second", help="Rate limit for Unpaywall requests")
     parser.add_argument("--gemini-api-key", help="Google Gemini API key")
     parser.add_argument("--gemini-base-url", help="Gemini Generative Language API base URL")
     parser.add_argument("--gemini-model", help="Gemini model name, default gemini-2.5-flash")
@@ -957,7 +1042,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
         dest="full_text_max_chars",
         help="Maximum number of full-text characters to include in screening",
     )
-    parser.add_argument("--max-workers", type=int, help="Parallel worker count for discovery and screening")
+    parser.add_argument("--max-workers", type=int, help="Global parallel worker count used when stage-specific overrides are unset")
+    parser.add_argument("--discovery-workers", type=int, help="Optional worker override for discovery sources")
+    parser.add_argument("--io-workers", type=int, help="Optional worker override for PDF and full-text preparation stages")
+    parser.add_argument("--screening-workers", type=int, help="Optional worker override for AI screening stages")
     parser.add_argument(
         "--request-timeout-seconds",
         type=int,
@@ -969,6 +1057,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=None,
         help="Resume and skip already-screened papers for the same query",
+    )
+    parser.add_argument(
+        "--reset-query-records",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Delete existing paper rows for the active query before the run starts",
+    )
+    parser.add_argument(
+        "--clear-screening-cache",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Delete cached screening results for the current screening context before the run starts",
     )
     parser.add_argument(
         "--disable-progress-bars",
