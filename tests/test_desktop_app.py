@@ -93,8 +93,27 @@ class DesktopWorkbenchTests(unittest.TestCase):
 
         self.assertEqual(
             labels,
-            ["Review Setup", "Discovery", "AI Screening", "Storage and Output", "Runtime and Logs"],
+            [
+                "Review Setup",
+                "Discovery",
+                "AI Screening",
+                "Connections and Keys",
+                "Storage and Output",
+                "Advanced Runtime",
+            ],
         )
+
+    def test_advanced_settings_page_is_hidden_until_requested(self) -> None:
+        notebook = self.workbench.settings_pages_notebook
+        advanced_page = self.workbench.settings_page_frames["Advanced Runtime"]
+
+        self.assertFalse(self.workbench.show_advanced_settings.get())
+        self.assertEqual(notebook.tab(advanced_page, "state"), "hidden")
+
+        self.workbench.show_advanced_settings.set(True)
+        self.workbench._apply_settings_page_visibility()
+
+        self.assertEqual(notebook.tab(advanced_page, "state"), "normal")
 
     def test_structured_widget_types_are_used_for_common_settings(self) -> None:
         self.assertEqual(self.workbench.field_widget_types["llm_provider"], "combobox")
@@ -252,6 +271,7 @@ class DesktopWorkbenchTests(unittest.TestCase):
         self.assertIn("Edit Pass Chain", joined)
         self.assertIn("Download paper PDFs", joined)
         self.assertIn("Write SQLite exports", joined)
+        self.assertIn("Open Connections and Keys", joined)
 
 
 if __name__ == "__main__":  # pragma: no cover - direct module execution helper

@@ -88,6 +88,21 @@ Main tabs:
 - `Outputs`
 - `Handbook`
 
+Settings pages:
+
+- `Review Setup`
+- `Discovery`
+- `AI Screening`
+- `Connections and Keys`
+- `Storage and Output`
+- `Advanced Runtime`
+
+Important visibility behavior:
+
+- each settings page is vertically scrollable
+- `Connections and Keys` is the dedicated page for provider URLs, API keys, Crossref mailto, and Unpaywall email
+- `Advanced Runtime` stays hidden until `Show advanced settings` is enabled or a search jump opens one of its fields
+
 Toolbar actions:
 
 - `Start Run`: run discovery and analysis using the current form values
@@ -113,7 +128,7 @@ Boolean fields usually support both forms:
 - `--download-pdfs`
 - `--no-download-pdfs`
 
-The GUI exposes the same underlying settings as checkboxes, dropdowns, sliders, spinboxes, and path pickers.
+The GUI exposes the same underlying settings as checkboxes, dropdowns, sliders, spinboxes, path pickers, scrollable settings pages, and a search box that can reveal hidden advanced pages automatically.
 
 If in doubt, the authoritative sources are:
 

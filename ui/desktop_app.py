@@ -111,9 +111,12 @@ class DesktopWorkbench:
         ("Review Setup", ["Review Brief"]),
         ("Discovery", ["Discovery"]),
         ("AI Screening", ["Screening and Models"]),
+        ("Connections and Keys", ["Connections and Keys"]),
         ("Storage and Output", ["PDFs and Outputs"]),
-        ("Runtime and Logs", ["Execution and Logging"]),
+        ("Advanced Runtime", ["Discovery Imports and Rate Limits", "Advanced Screening", "Execution and Logging"]),
     ]
+
+    ADVANCED_SETTINGS_PAGES = {"Advanced Runtime"}
 
     MULTILINE_FIELDS = {
         "research_topic": ("Research brief", 3),
@@ -215,6 +218,11 @@ class DesktopWorkbench:
                 "springer_enabled",
                 "arxiv_enabled",
                 "include_pubmed",
+            ],
+        ),
+        (
+            "Discovery Imports and Rate Limits",
+            [
                 "fixture_data_path",
                 "manual_source_path",
                 "google_scholar_import_path",
@@ -237,26 +245,39 @@ class DesktopWorkbench:
                 "decision_mode",
                 "maybe_threshold_margin",
                 "analyze_full_text",
-                "full_text_max_chars",
-                "openai_base_url",
                 "openai_model",
+                "gemini_model",
+                "ollama_model",
+                "huggingface_model",
+            ],
+        ),
+        (
+            "Connections and Keys",
+            [
+                "openai_base_url",
                 "openai_api_key",
                 "gemini_base_url",
                 "gemini_model",
                 "gemini_api_key",
                 "ollama_base_url",
-                "ollama_model",
                 "ollama_api_key",
+                "semantic_scholar_api_key",
+                "springer_api_key",
+                "crossref_mailto",
+                "unpaywall_email",
+            ],
+        ),
+        (
+            "Advanced Screening",
+            [
+                "full_text_max_chars",
                 "llm_temperature",
-                "huggingface_model",
                 "huggingface_task",
                 "huggingface_device",
                 "huggingface_dtype",
                 "huggingface_max_new_tokens",
                 "huggingface_cache_dir",
                 "huggingface_trust_remote_code",
-                "semantic_scholar_api_key",
-                "springer_api_key",
             ],
         ),
         (
@@ -296,8 +317,6 @@ class DesktopWorkbench:
                 "log_llm_prompts",
                 "log_llm_responses",
                 "log_screening_decisions",
-                "crossref_mailto",
-                "unpaywall_email",
             ],
         ),
     ]
@@ -432,7 +451,7 @@ class DesktopWorkbench:
         "guide:api_keys": (
             "Guide",
             "Where API keys and endpoint settings go",
-            "Provider keys and endpoint URLs live in 'Screening and Models' and 'Execution and Logging'. "
+            "Provider keys and endpoint URLs live on the dedicated 'Connections and Keys' settings page. "
             "OpenAI-compatible keys, Gemini base URL and API key, Ollama base URL and API key, Semantic Scholar API key, "
             "Springer API key, Crossref mailto, and Unpaywall email are all editable in the GUI and saved into profiles.",
         ),
@@ -478,9 +497,21 @@ class DesktopWorkbench:
             "Control where papers are discovered and how broad the search becomes. These settings "
             "affect recall, API volume, rate limits, and when discovery stops."
         ),
+        "Discovery Imports and Rate Limits": (
+            "Optional import files and per-source rate-limit controls. Use this page when you need manual imports, "
+            "offline fixtures, or fine-grained throttling for providers that return 429 responses."
+        ),
         "Screening and Models": (
             "Choose how papers are evaluated after discovery. This section controls the LLM or "
-            "heuristic screener, thresholds, full-text use, and provider-specific model settings."
+            "heuristic screener, thresholds, and the primary model names used for screening."
+        ),
+        "Connections and Keys": (
+            "Enter provider base URLs, API keys, and contact details here. This page is the single place for model "
+            "credentials and API connection settings."
+        ),
+        "Advanced Screening": (
+            "Fine-tune local-model runtime behavior, full-text limits, temperature, and other screening options that "
+            "usually matter only when you are optimizing or debugging the review setup."
         ),
         "PDFs and Outputs": (
             "Choose which artifacts are written to disk and where they go. Relevant PDFs can be "
@@ -768,7 +799,8 @@ class DesktopWorkbench:
         self.args = args
         self.root = tk.Tk()
         self.root.title("PRISMA Literature Review Workbench")
-        self.root.geometry("1400x900")
+        self.root.geometry("1280x820")
+        self.root.minsize(1120, 720)
         self.style = ttk.Style(self.root)
         self.active_theme = self._configure_theme()
         self.profile_manager = ProfileManager()
@@ -802,6 +834,9 @@ class DesktopWorkbench:
         self.handbook_text: scrolledtext.ScrolledText | None = None
         self.settings_pages_notebook: ttk.Notebook | None = None
         self.settings_page_frames: dict[str, ttk.Frame] = {}
+        self.settings_page_content_frames: dict[str, ttk.Frame] = {}
+        self.settings_page_canvases: dict[str, tk.Canvas] = {}
+        self.settings_canvas: tk.Canvas | None = None
         self.settings_search_choice_var = tk.StringVar(value="")
         self.settings_search_var = tk.StringVar(value="")
         self.settings_search_combo: ttk.Combobox | None = None
@@ -811,6 +846,7 @@ class DesktopWorkbench:
         self.base_status_message = "Ready."
         self.status_var = tk.StringVar(value=self.base_status_message)
         self.hover_help_enabled = tk.BooleanVar(value=True)
+        self.show_advanced_settings = tk.BooleanVar(value=False)
         self.hover_tooltip = HoverTooltip(self.root)
         self._hover_message_active = False
         self.all_filter_var = tk.StringVar(value="all")
@@ -824,6 +860,9 @@ class DesktopWorkbench:
         self._refresh_settings_search_results()
         self._refresh_settings_overview()
         self._refresh_profile_choices()
+        self.root.bind_all("<MouseWheel>", self._on_settings_mousewheel, add="+")
+        self.root.bind_all("<Button-4>", self._on_settings_mousewheel, add="+")
+        self.root.bind_all("<Button-5>", self._on_settings_mousewheel, add="+")
         self.root.after(100, self._poll_messages)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -1025,6 +1064,95 @@ class DesktopWorkbench:
         self.root.mainloop()
         return 0
 
+    def _build_scrollable_settings_page(self, notebook: ttk.Notebook, page_name: str) -> ttk.Frame:
+        """Create one vertically scrollable settings page inside the settings notebook."""
+
+        page = ttk.Frame(notebook, style="Surface.TFrame")
+        page.columnconfigure(0, weight=1)
+        page.rowconfigure(0, weight=1)
+
+        canvas = tk.Canvas(
+            page,
+            background=self.PALETTE["surface_bg"],
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        scrollbar = ttk.Scrollbar(page, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        content = ttk.Frame(canvas, padding=10, style="Surface.TFrame")
+        content.columnconfigure(0, weight=1)
+        window_id = canvas.create_window((0, 0), window=content, anchor="nw")
+
+        content.bind(
+            "<Configure>",
+            lambda _event, page_canvas=canvas: page_canvas.configure(scrollregion=page_canvas.bbox("all")),
+        )
+        canvas.bind(
+            "<Configure>",
+            lambda event, page_canvas=canvas, page_window=window_id: page_canvas.itemconfigure(page_window, width=event.width),
+        )
+
+        for widget in (page, canvas, content):
+            widget.bind("<Enter>", lambda _event, page_canvas=canvas: self._activate_settings_canvas(page_canvas), add="+")
+
+        self.settings_page_canvases[page_name] = canvas
+        self.settings_page_content_frames[page_name] = content
+        return page
+
+    def _activate_settings_canvas(self, canvas: tk.Canvas | None) -> None:
+        """Mark the settings canvas that should react to mouse-wheel scrolling."""
+
+        self.settings_canvas = canvas
+
+    def _handle_settings_page_changed(self, _event: tk.Event | None = None) -> None:
+        """Update the active scroll target when the visible settings page changes."""
+
+        if self.settings_pages_notebook is None:
+            return
+        current_tab = self.settings_pages_notebook.select()
+        if not current_tab:
+            self.settings_canvas = None
+            return
+        page_name = self.settings_pages_notebook.tab(current_tab, "text")
+        self.settings_canvas = self.settings_page_canvases.get(page_name)
+
+    def _on_settings_mousewheel(self, event: tk.Event) -> str | None:
+        """Scroll the active settings page when the mouse wheel is used over the settings tab."""
+
+        if self.settings_canvas is None:
+            return None
+        delta = getattr(event, "delta", 0)
+        if delta == 0:
+            num = getattr(event, "num", None)
+            if num == 4:
+                delta = 120
+            elif num == 5:
+                delta = -120
+        if delta:
+            direction = -1 if delta > 0 else 1
+            self.settings_canvas.yview_scroll(direction, "units")
+            return "break"
+        return None
+
+    def _apply_settings_page_visibility(self) -> None:
+        """Hide or reveal advanced settings pages based on the current UI mode toggle."""
+
+        if self.settings_pages_notebook is None:
+            return
+        show_advanced = bool(self.show_advanced_settings.get())
+        for page_name, page in self.settings_page_frames.items():
+            if page_name in self.ADVANCED_SETTINGS_PAGES:
+                state = "normal" if show_advanced else "hidden"
+                self.settings_pages_notebook.tab(page, state=state)
+        visible_tabs = [tab_id for tab_id in self.settings_pages_notebook.tabs() if self.settings_pages_notebook.tab(tab_id, "state") == "normal"]
+        current = self.settings_pages_notebook.select()
+        if current and self.settings_pages_notebook.tab(current, "state") != "normal" and visible_tabs:
+            self.settings_pages_notebook.select(visible_tabs[0])
+        self._handle_settings_page_changed()
+
     def _build_layout(self) -> None:
         """Construct the top-level toolbar, notebook, and status bar widgets."""
 
@@ -1135,7 +1263,9 @@ class DesktopWorkbench:
             text=(
                 "Every CLI-relevant runtime setting is exposed here. The settings are split into dedicated pages so "
                 "you can work with actual GUI controls such as dropdowns, radio buttons, switches, sliders, and "
-                "browse dialogs instead of hunting through one long text-heavy form."
+                "browse dialogs instead of hunting through one long text-heavy form. Exports are controlled from "
+                "'Storage and Output', API credentials live on 'Connections and Keys', and the optional advanced page "
+                "is hidden until you ask for it."
             ),
             wraplength=1180,
             justify="left",
@@ -1151,16 +1281,17 @@ class DesktopWorkbench:
         page_notebook = ttk.Notebook(container, style="Workbench.TNotebook")
         page_notebook.grid(row=2, column=0, sticky="nsew")
         self.settings_pages_notebook = page_notebook
+        page_notebook.bind("<<NotebookTabChanged>>", self._handle_settings_page_changed)
 
         grouped_fields = {section_name: field_names for section_name, field_names in self.GROUPS}
         for page_name, section_names in self.SETTINGS_PAGES:
-            page = ttk.Frame(page_notebook, padding=10, style="Surface.TFrame")
-            page.columnconfigure(0, weight=1)
+            page = self._build_scrollable_settings_page(page_notebook, page_name)
             page_notebook.add(page, text=page_name)
             self.settings_page_frames[page_name] = page
+            page_content = self.settings_page_content_frames[page_name]
 
             intro = ttk.Label(
-                page,
+                page_content,
                 text=(
                     "Use the controls on this page to adjust the corresponding runtime behavior. Hover any field for a "
                     "plain-language explanation or open the Handbook tab for the full reference."
@@ -1173,9 +1304,11 @@ class DesktopWorkbench:
             self._bind_hover_help(intro, f"Settings page: {page_name}.")
 
             for row, section_name in enumerate(section_names, start=1):
-                self._render_settings_group(page, page_name, section_name, grouped_fields[section_name], row)
+                self._render_settings_group(page_content, page_name, section_name, grouped_fields[section_name], row)
 
         self._populate_quick_access_controls()
+        self._apply_settings_page_visibility()
+        self._handle_settings_page_changed()
 
     def _render_settings_group(
         self,
@@ -1454,7 +1587,9 @@ class DesktopWorkbench:
             parent,
             text=(
                 "Use the direct controls below for the most important settings, or use search and jump buttons to find "
-                "model selection, chained passes, thresholds, CSV/SQLite outputs, PDF folders, and verbose logging immediately."
+                "model selection, chained passes, thresholds, CSV/SQLite outputs, PDF folders, API credentials, and "
+                "verbose logging immediately. The results folder controls CSV/JSON/Markdown output, and the main SQLite "
+                "database path controls the runtime database."
             ),
             wraplength=1040,
             justify="left",
@@ -1470,10 +1605,31 @@ class DesktopWorkbench:
         search_entry.grid(row=0, column=1, sticky="ew", padx=(6, 6))
         search_entry.bind("<KeyRelease>", lambda _event: self._refresh_settings_search_results())
         search_entry.bind("<Return>", lambda _event: self._focus_selected_setting())
+        self._bind_hover_help(
+            search_entry,
+            "Search by setting name or description. Hidden advanced settings can also be found here and will be shown automatically when you jump to them.",
+        )
         self.settings_search_combo = ttk.Combobox(search_bar, textvariable=self.settings_search_choice_var, state="readonly")
         self.settings_search_combo.grid(row=0, column=2, sticky="ew", padx=(0, 6))
         self.settings_search_combo.bind("<<ComboboxSelected>>", lambda _event: self._focus_selected_setting())
-        ttk.Button(search_bar, text="Go", command=self._focus_selected_setting).grid(row=0, column=3)
+        self._bind_hover_help(
+            self.settings_search_combo,
+            "Matching settings are listed with their section names so you can jump straight to storage paths, API credentials, thresholds, or logging options.",
+        )
+        go_button = ttk.Button(search_bar, text="Go", command=self._focus_selected_setting)
+        go_button.grid(row=0, column=3, padx=(0, 8))
+        self._bind_hover_help(go_button, "Jump to the selected setting and show its explanation.")
+        advanced_toggle = ttk.Checkbutton(
+            search_bar,
+            text="Show advanced settings",
+            variable=self.show_advanced_settings,
+            command=self._apply_settings_page_visibility,
+        )
+        advanced_toggle.grid(row=0, column=4, sticky="e")
+        self._bind_hover_help(
+            advanced_toggle,
+            "Reveal lower-level pages for rate limits, worker overrides, import-only sources, and advanced model runtime tuning.",
+        )
 
         jump_bar = ttk.Frame(parent)
         jump_bar.grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 10))
@@ -1482,6 +1638,7 @@ class DesktopWorkbench:
             ("Jump to Thresholds", lambda: self._focus_field("relevance_threshold")),
             ("Jump to Outputs", lambda: self._focus_field("output_csv")),
             ("Jump to Storage Paths", lambda: self._focus_field("database_path")),
+            ("Jump to Connections", lambda: self._focus_field("openai_api_key")),
             ("Jump to Runtime Tuning", lambda: self._focus_field("max_workers")),
             ("Jump to Logging", lambda: self._focus_field("verbosity")),
             ("Edit Pass Chain", self._open_pass_builder),
@@ -1539,7 +1696,8 @@ class DesktopWorkbench:
             frame,
             text=(
                 "These controls mirror the full settings below. Use them to pick the model, adjust thresholds, decide "
-                "whether PDFs should be downloaded, and set the main storage paths without hunting through the form."
+                "whether PDFs should be downloaded, and set the main storage paths without hunting through the form. "
+                "If you are looking for API keys or provider URLs, jump to the dedicated 'Connections and Keys' page."
             ),
             wraplength=1040,
             justify="left",
@@ -1584,7 +1742,14 @@ class DesktopWorkbench:
         threshold_button.grid(row=1, column=3, sticky="w", padx=4, pady=4)
         self._bind_hover_help(threshold_button, self._help_text_for_field("relevance_threshold"))
 
-        for row, field_name in enumerate(("openai_model", "gemini_model", "ollama_model", "huggingface_model"), start=2):
+        connections_button = ttk.Button(frame, text="Open Connections and Keys", command=lambda: self._focus_field("openai_api_key"))
+        connections_button.grid(row=2, column=2, sticky="w", padx=4, pady=4)
+        self._bind_hover_help(
+            connections_button,
+            "Open the dedicated page for provider base URLs, API keys, Crossref mailto, and Unpaywall email.",
+        )
+
+        for row, field_name in enumerate(("openai_model", "gemini_model", "ollama_model", "huggingface_model"), start=3):
             add_label(row, 0, field_name)
             widget = ttk.Combobox(
                 frame,
@@ -1595,7 +1760,7 @@ class DesktopWorkbench:
             widget.grid(row=row, column=1, columnspan=3, sticky="ew", padx=4, pady=4)
             self._bind_hover_help(widget, self._help_text_for_field(field_name))
 
-        download_row = 2 + len(("openai_model", "gemini_model", "ollama_model", "huggingface_model"))
+        download_row = 3 + len(("openai_model", "gemini_model", "ollama_model", "huggingface_model"))
 
         download_widget = ttk.Checkbutton(
             frame,
@@ -1683,8 +1848,13 @@ class DesktopWorkbench:
             return
         self.notebook.select(self.settings_tab)
         page_name = self.field_to_settings_page.get(field_name)
+        if page_name in self.ADVANCED_SETTINGS_PAGES and not self.show_advanced_settings.get():
+            self.show_advanced_settings.set(True)
+            self._apply_settings_page_visibility()
         if page_name and self.settings_pages_notebook is not None and page_name in self.settings_page_frames:
             self.settings_pages_notebook.select(self.settings_page_frames[page_name])
+            self._handle_settings_page_changed()
+        self._scroll_widget_into_view(widget)
         try:
             widget.focus_set()
         except tk.TclError:
@@ -1693,17 +1863,38 @@ class DesktopWorkbench:
         self._set_status(f"Focused setting: {self.LABELS.get(field_name, field_name)}")
 
     def _scroll_widget_into_view(self, widget: tk.Widget) -> None:
-        """Preserve the old focus helper contract for tests and future layout changes.
-
-        The settings UI now uses notebook pages rather than a scrollable canvas, so focusing the
-        correct page is enough for visibility in the current layout. This helper intentionally
-        stays lightweight instead of reintroducing the removed canvas-specific scroll code.
-        """
+        """Scroll the active settings page so the requested widget becomes visible."""
 
         try:
             widget.update_idletasks()
         except tk.TclError:
             return
+        target_canvas = self.settings_canvas
+        if target_canvas is None:
+            return
+        target_content: ttk.Frame | None = None
+        for page_name, canvas in self.settings_page_canvases.items():
+            if canvas is target_canvas:
+                target_content = self.settings_page_content_frames.get(page_name)
+                break
+        if target_content is None:
+            return
+        try:
+            target_canvas.update_idletasks()
+            target_content.update_idletasks()
+            widget_y = widget.winfo_rooty() - target_content.winfo_rooty()
+            widget_height = max(widget.winfo_height(), 1)
+            content_height = max(target_content.winfo_height(), 1)
+        except tk.TclError:
+            return
+        top_fraction = max((widget_y - 24) / content_height, 0.0)
+        bottom_fraction = min((widget_y + widget_height + 24) / content_height, 1.0)
+        first, last = target_canvas.yview()
+        visible_span = max(last - first, 0.1)
+        if top_fraction < first:
+            target_canvas.yview_moveto(top_fraction)
+        elif bottom_fraction > last:
+            target_canvas.yview_moveto(max(0.0, min(bottom_fraction - visible_span, 1.0)))
 
     def _format_slider_value(self, field_name: str, value: float) -> str:
         """Format slider-backed numeric values consistently for display labels."""
@@ -2053,6 +2244,14 @@ class DesktopWorkbench:
         self._set_text_widget_value(widget, "\n".join(lines))
         self._refresh_settings_overview()
 
+    def _validate_pass_builder_name(self, name: str, parent: tk.Misc) -> bool:
+        """Return ``True`` when a pass builder row has a valid name, else show an error."""
+
+        if name.strip():
+            return True
+        messagebox.showerror("Pass name required", "Enter a pass name before saving.", parent=parent)
+        return False
+
     def _open_pass_builder(self) -> None:
         """Open a small visual editor for chained multi-pass model configuration."""
 
@@ -2169,8 +2368,7 @@ class DesktopWorkbench:
 
         def save_current() -> None:
             name = form_vars["name"].get().strip()
-            if not name:
-                messagebox.showerror("Pass name required", "Enter a pass name before saving.", parent=dialog)
+            if not self._validate_pass_builder_name(name, dialog):
                 return
             entry = {
                 "name": name,
@@ -2660,6 +2858,11 @@ class DesktopWorkbench:
         if self.current_controller is not None:
             self.current_controller.request_stop()
         self.hover_tooltip.hide()
+        for sequence in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            try:
+                self.root.unbind_all(sequence)
+            except tk.TclError:
+                pass
         if self.log_handler in self.root_logger.handlers:
             self.root_logger.removeHandler(self.log_handler)
         self.root.destroy()

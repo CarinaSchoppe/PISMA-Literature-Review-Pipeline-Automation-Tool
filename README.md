@@ -108,8 +108,11 @@ The guided desktop workbench provides:
   - `Review Setup`
   - `Discovery`
   - `AI Screening`
+  - `Connections and Keys`
   - `Storage and Output`
-  - `Runtime and Logs`
+  - `Advanced Runtime`
+- scrollable settings pages so the window stays usable on smaller screens
+- `Show advanced settings` toggle so lower-level runtime options stay out of the way until needed
 - quick-access controls for the most-used model and output settings
 - searchable `Handbook` tab
 - hover help and keyboard-focus help for settings

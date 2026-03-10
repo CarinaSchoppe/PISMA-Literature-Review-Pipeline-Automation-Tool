@@ -137,6 +137,104 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
         self.workbench._toggle_hover_help()
         self.assertIn("Hover help enabled", self.workbench.status_var.get())
 
+    def test_scroll_visibility_and_search_guard_branches(self) -> None:
+        self.workbench.settings_search_var.set("definitely-no-setting")
+        self.workbench._refresh_settings_search_results()
+        self.assertEqual(self.workbench.settings_search_choice_var.get(), "")
+
+        self.workbench._activate_settings_canvas(None)
+        self.assertIsNone(self.workbench.settings_canvas)
+        self.assertIsNone(self.workbench._on_settings_mousewheel(SimpleNamespace(delta=120)))
+        self.assertIsNone(self.workbench._on_settings_mousewheel(SimpleNamespace(delta=0, num=0)))
+
+        canvas = Mock()
+        self.workbench._activate_settings_canvas(canvas)
+        self.assertEqual(self.workbench._on_settings_mousewheel(SimpleNamespace(delta=0, num=4)), "break")
+        self.assertEqual(self.workbench._on_settings_mousewheel(SimpleNamespace(delta=0, num=5)), "break")
+        self.assertEqual(canvas.yview_scroll.call_count, 2)
+
+        original_notebook = self.workbench.settings_pages_notebook
+        self.workbench.settings_pages_notebook = None
+        self.workbench._handle_settings_page_changed()
+        self.workbench._apply_settings_page_visibility()
+        self.workbench.settings_pages_notebook = original_notebook
+
+        with patch.object(self.workbench.settings_pages_notebook, "select", return_value=""):
+            self.workbench._handle_settings_page_changed()
+        self.assertIsNone(self.workbench.settings_canvas)
+
+        class FakeNotebook:
+            def __init__(self, hidden_page):
+                self.hidden_page = hidden_page
+                self.selected = hidden_page
+                self.states = {hidden_page: "hidden", "basic": "normal"}
+
+            def tab(self, tab_id, option=None, **kwargs):
+                if kwargs:
+                    if "state" in kwargs:
+                        self.states[tab_id] = kwargs["state"]
+                    return None
+                if option == "state":
+                    return self.states[tab_id]
+                if option == "text":
+                    return tab_id
+                return None
+
+            def tabs(self):
+                return ["basic", self.hidden_page]
+
+            def select(self, tab_id=None):
+                if tab_id is not None:
+                    self.selected = tab_id
+                return self.selected
+
+        advanced_page = self.workbench.settings_page_frames["Advanced Runtime"]
+        fake_notebook = FakeNotebook(advanced_page)
+        original_notebook = self.workbench.settings_pages_notebook
+        self.workbench.settings_pages_notebook = fake_notebook
+        self.workbench.show_advanced_settings.set(False)
+        self.workbench._apply_settings_page_visibility()
+        self.assertEqual(fake_notebook.selected, "basic")
+        self.workbench.settings_pages_notebook = original_notebook
+
+    def test_scroll_and_output_guard_branches(self) -> None:
+        widget = self.workbench.field_focus_widgets["database_path"]
+        self.workbench.settings_canvas = None
+        self.workbench._scroll_widget_into_view(widget)
+
+        fake_canvas = Mock()
+        fake_canvas.update_idletasks = Mock()
+        fake_canvas.yview.return_value = (0.6, 0.8)
+        fake_content = Mock()
+        fake_content.update_idletasks = Mock()
+        fake_content.winfo_height.return_value = 1000
+        fake_content.winfo_rooty.return_value = 100
+        fake_widget = Mock()
+        fake_widget.update_idletasks = Mock()
+        fake_widget.winfo_rooty.return_value = 200
+        fake_widget.winfo_height.return_value = 40
+        self.workbench.settings_canvas = fake_canvas
+        self.workbench.settings_page_canvases = {"Storage and Output": fake_canvas}
+        self.workbench.settings_page_content_frames = {"Storage and Output": fake_content}
+        self.workbench._scroll_widget_into_view(fake_widget)
+        fake_canvas.yview_moveto.assert_called_once()
+
+        fake_canvas.reset_mock()
+        fake_canvas.update_idletasks.side_effect = tk.TclError("bad canvas")
+        self.workbench._scroll_widget_into_view(fake_widget)
+
+        self.workbench.outputs_tree = None
+        self.workbench._open_selected_output()
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "file.txt"
+            path.write_text("x", encoding="utf-8")
+            with patch("ui.desktop_app.subprocess.run") as run_mock, patch(
+                "ui.desktop_app.os.name", "posix"
+            ), patch("ui.desktop_app.sys.platform", "linux"):
+                self.workbench._open_path(path)
+            run_mock.assert_called_once()
+
     def test_handbook_path_and_analysis_pass_guard_branches(self) -> None:
         handbook_tree = self.workbench.handbook_tree
         handbook_text = self.workbench.handbook_text
@@ -144,6 +242,8 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
         self.workbench.handbook_tree = None
         self.workbench._handle_handbook_selection(None)
         self.workbench.handbook_tree = handbook_tree
+        self.workbench.handbook_tree.selection_remove(self.workbench.handbook_tree.selection())
+        self.workbench._handle_handbook_selection(None)
         self.workbench._handle_handbook_selection(None)
         self.workbench._render_handbook_entry("missing")
         self.assertIn("No handbook content", self.workbench.handbook_text.get("1.0", tk.END))
@@ -189,18 +289,27 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
         tree.selection_set("0")
         tree.event_generate("<<TreeviewSelect>>")
         _find_button(dialog, "Update Pass").invoke()
+        tree.selection_remove(tree.selection())
+        tree.event_generate("<<TreeviewSelect>>")
 
         tree.selection_remove("0")
         _find_button(dialog, "Remove Pass").invoke()
         _find_button(dialog, "Move Down").invoke()
-
-        _find_button(dialog, "Add Pass").invoke()
         tree.selection_set("0")
         _find_button(dialog, "Move Up").invoke()
         _find_button(dialog, "Apply").invoke()
 
         passes = self.workbench._current_analysis_passes()
         self.assertTrue(passes)
+
+        self.workbench._open_pass_builder()
+        validation_dialog = [
+            widget for widget in self.workbench.root.winfo_children() if isinstance(widget, tk.Toplevel)
+        ][-1]
+        with patch("ui.desktop_app.messagebox.showerror") as showerror:
+            self.assertFalse(self.workbench._validate_pass_builder_name("", validation_dialog))
+        showerror.assert_called_once()
+        validation_dialog.destroy()
 
     def test_collection_start_poll_tables_outputs_and_close_branches(self) -> None:
         self.workbench.profile_combo.set("combo-profile")
@@ -296,12 +405,22 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
 
         controller = Mock()
         self.workbench.current_controller = controller
+        with patch.object(self.workbench, "_set_status") as set_status, patch("ui.desktop_app.PipelineController", BrokenController), patch(
+            "ui.desktop_app.threading.Thread", FakeThread
+        ), patch.object(self.workbench.root, "after", return_value=None):
+            self.workbench._start_run(skip_discovery_override=True, run_mode_override="analyze")
+        set_status.assert_any_call("Running analysis from stored records...")
+
+        self.workbench.current_controller = controller
         with patch.object(self.workbench.root_logger, "removeHandler") as remove_handler, patch.object(
             self.workbench.root, "destroy"
-        ) as destroy:
+        ) as destroy, patch.object(
+            self.workbench.root, "unbind_all", side_effect=[tk.TclError("x"), tk.TclError("y"), tk.TclError("z")]
+        ) as unbind_all:
             self.workbench._on_close()
         controller.request_stop.assert_called_once()
         remove_handler.assert_called_once()
+        self.assertEqual(unbind_all.call_count, 3)
         destroy.assert_called_once()
         del self.workbench
 
