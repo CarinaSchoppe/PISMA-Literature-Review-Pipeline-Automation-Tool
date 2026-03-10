@@ -80,7 +80,8 @@ class CoverageReportTests(unittest.TestCase):
     @patch("builtins.print")
     @patch("coverage_report.subprocess.run")
     def test_run_coverage_report_writes_expected_artifacts(self, run_mock, _print_mock) -> None:
-        def fake_run(command, cwd=None, check=None, text=None, capture_output=False):
+        def fake_run(command, cwd=None, check=None, text=None, capture_output=False, env=None):
+            self.assertIn("COVERAGE_FILE", env)
             if "json" in command:
                 output_path = Path(command[command.index("-o") + 1])
                 output_path.write_text(
@@ -123,12 +124,14 @@ class CoverageReportTests(unittest.TestCase):
             self.assertTrue((base / "coverage_report.md").exists())
             self.assertTrue((base / "coverage_report.txt").exists())
             self.assertTrue((base / "coverage_summary.json").exists())
+            self.assertFalse((base / ".coverage").exists())
             self.assertIn("config.py", (base / "coverage_report.txt").read_text(encoding="utf-8"))
 
     @patch("builtins.print")
     @patch("coverage_report.subprocess.run")
     def test_run_coverage_report_can_fail_threshold(self, run_mock, _print_mock) -> None:
-        def fake_run(command, cwd=None, check=None, text=None, capture_output=False):
+        def fake_run(command, cwd=None, check=None, text=None, capture_output=False, env=None):
+            self.assertIn("COVERAGE_FILE", env)
             if "json" in command:
                 output_path = Path(command[command.index("-o") + 1])
                 output_path.write_text(

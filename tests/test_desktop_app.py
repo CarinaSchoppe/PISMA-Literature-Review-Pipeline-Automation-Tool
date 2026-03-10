@@ -11,6 +11,14 @@ from config import ApiSettings, ResearchConfig
 from ui.desktop_app import DesktopWorkbench
 
 
+def _walk_widgets(widget: tk.Misc):
+    """Yield one widget and all descendants for Tkinter lookup assertions."""
+
+    yield widget
+    for child in widget.winfo_children():
+        yield from _walk_widgets(child)
+
+
 class DesktopWorkbenchTests(unittest.TestCase):
     """Verify the guided desktop UI exposes contextual help for key settings."""
 
@@ -86,16 +94,13 @@ class DesktopWorkbenchTests(unittest.TestCase):
         self.assertIn("analysis_passes", self.workbench.text_widgets)
 
         toolbar_texts: list[str] = []
-        for widget in self.workbench.root.winfo_children():
-            if widget.winfo_class() != "TFrame":
+        for widget in _walk_widgets(self.workbench.root):
+            try:
+                text = widget.cget("text")
+            except tk.TclError:
                 continue
-            for child in widget.winfo_children():
-                try:
-                    text = child.cget("text")
-                except tk.TclError:
-                    continue
-                if text:
-                    toolbar_texts.append(text)
+            if text:
+                toolbar_texts.append(text)
 
         self.assertIn("Analyze Stored Results", toolbar_texts)
         self.assertIn("Force Stop", toolbar_texts)
@@ -122,6 +127,16 @@ class DesktopWorkbenchTests(unittest.TestCase):
                 "Advanced Runtime",
             ],
         )
+
+    def test_settings_layout_uses_navigation_and_inspector_tabs(self) -> None:
+        self.assertEqual(set(self.workbench.settings_nav_buttons.keys()), {name for name, _ in self.workbench.SETTINGS_PAGES})
+        self.assertIsNotNone(self.workbench.settings_tools_notebook)
+
+        inspector_labels = [
+            self.workbench.settings_tools_notebook.tab(tab_id, "text") for tab_id in self.workbench.settings_tools_notebook.tabs()
+        ]
+        self.assertEqual(inspector_labels, ["Find", "Quick Edit", "Guides", "Summary"])
+        self.assertEqual(self.workbench.active_settings_page_var.get(), "Review Setup")
 
     def test_advanced_settings_page_is_hidden_until_requested(self) -> None:
         notebook = self.workbench.settings_pages_notebook
@@ -279,7 +294,7 @@ class DesktopWorkbenchTests(unittest.TestCase):
         self.assertIsNotNone(frame)
 
         visible_texts: list[str] = []
-        for child in frame.winfo_children():
+        for child in _walk_widgets(frame):
             try:
                 text = child.cget("text")
             except tk.TclError:

@@ -116,6 +116,15 @@ class DesktopWorkbench:
         ("Advanced Runtime", ["Discovery Imports and Rate Limits", "Advanced Screening", "Execution and Logging"]),
     ]
 
+    SETTINGS_PAGE_DESCRIPTIONS = {
+        "Review Setup": "Define the review topic, research question, scope, keywords, and exclusion guardrails.",
+        "Discovery": "Control where papers come from, how broad the search is, and how many records are collected.",
+        "AI Screening": "Choose the active AI provider, configure chained passes, and tune thresholds or full-text analysis.",
+        "Connections and Keys": "Enter API keys, provider base URLs, and service-specific credentials in one place.",
+        "Storage and Output": "Choose whether to write CSV, JSON, Markdown, SQLite, and PDFs, and decide where they go.",
+        "Advanced Runtime": "Reveal rate limits, stage-specific worker counts, cache resets, and lower-level runtime tuning.",
+    }
+
     ADVANCED_SETTINGS_PAGES = {"Advanced Runtime"}
 
     MULTILINE_FIELDS = {
@@ -914,8 +923,8 @@ class DesktopWorkbench:
         self.args = args
         self.root = tk.Tk()
         self.root.title("PRISMA Literature Review Workbench")
-        self.root.geometry("1280x820")
-        self.root.minsize(1120, 720)
+        self.root.geometry("1220x780")
+        self.root.minsize(1000, 680)
         self.style = ttk.Style(self.root)
         self.active_theme = self._configure_theme()
         self.profile_manager = ProfileManager()
@@ -948,15 +957,18 @@ class DesktopWorkbench:
         self.handbook_tree: ttk.Treeview | None = None
         self.handbook_text: scrolledtext.ScrolledText | None = None
         self.settings_pages_notebook: ttk.Notebook | None = None
+        self.settings_tools_notebook: ttk.Notebook | None = None
         self.settings_page_frames: dict[str, ttk.Frame] = {}
         self.settings_page_content_frames: dict[str, ttk.Frame] = {}
         self.settings_page_canvases: dict[str, tk.Canvas] = {}
+        self.settings_nav_buttons: dict[str, ttk.Button] = {}
         self.settings_canvas: tk.Canvas | None = None
         self.settings_search_choice_var = tk.StringVar(value="")
         self.settings_search_var = tk.StringVar(value="")
         self.settings_search_combo: ttk.Combobox | None = None
         self.model_summary_text: scrolledtext.ScrolledText | None = None
         self.output_summary_text: scrolledtext.ScrolledText | None = None
+        self.active_settings_page_var = tk.StringVar(value="Review Setup")
         self.slider_value_labels: dict[str, ttk.Label] = {}
         self.base_status_message = "Ready."
         self.status_var = tk.StringVar(value=self.base_status_message)
@@ -1005,9 +1017,31 @@ class DesktopWorkbench:
         self.style.configure("TFrame", background=self.PALETTE["window_bg"])
         self.style.configure("Surface.TFrame", background=self.PALETTE["surface_bg"])
         self.style.configure(
+            "Header.TFrame",
+            background=self.PALETTE["surface_bg"],
+            relief="solid",
+            borderwidth=1,
+        )
+        self.style.configure(
+            "Sidebar.TFrame",
+            background=self.PALETTE["window_bg"],
+        )
+        self.style.configure(
             "TLabel",
             background=self.PALETTE["window_bg"],
             foreground=self.PALETTE["text"],
+            font=("Segoe UI", 10),
+        )
+        self.style.configure(
+            "HeroTitle.TLabel",
+            background=self.PALETTE["surface_bg"],
+            foreground=self.PALETTE["text"],
+            font=("Segoe UI Semibold", 18),
+        )
+        self.style.configure(
+            "HeroSubtitle.TLabel",
+            background=self.PALETTE["surface_bg"],
+            foreground=self.PALETTE["muted_text"],
             font=("Segoe UI", 10),
         )
         self.style.configure(
@@ -1104,6 +1138,30 @@ class DesktopWorkbench:
         self.style.map(
             "Secondary.TButton",
             background=[("active", self.PALETTE["selection"])],
+        )
+        self.style.configure(
+            "Nav.TButton",
+            background=self.PALETTE["surface_bg"],
+            foreground=self.PALETTE["text"],
+            padding=(14, 10),
+            borderwidth=1,
+            relief="solid",
+        )
+        self.style.map(
+            "Nav.TButton",
+            background=[("active", self.PALETTE["selection"])],
+        )
+        self.style.configure(
+            "SelectedNav.TButton",
+            background=self.PALETTE["accent"],
+            foreground="#ffffff",
+            padding=(14, 10),
+            borderwidth=0,
+        )
+        self.style.map(
+            "SelectedNav.TButton",
+            background=[("active", self.PALETTE["accent_active"])],
+            foreground=[("active", "#ffffff")],
         )
         self.style.configure(
             "Danger.TButton",
@@ -1233,6 +1291,9 @@ class DesktopWorkbench:
             return
         page_name = self.settings_pages_notebook.tab(current_tab, "text")
         self.settings_canvas = self.settings_page_canvases.get(page_name)
+        self.active_settings_page_var.set(page_name)
+        for name, button in self.settings_nav_buttons.items():
+            button.configure(style="SelectedNav.TButton" if name == page_name else "Nav.TButton")
 
     def _on_settings_mousewheel(self, event: tk.Event) -> str | None:
         """Scroll the active settings page when the mouse wheel is used over the settings tab."""
@@ -1262,6 +1323,8 @@ class DesktopWorkbench:
             if page_name in self.ADVANCED_SETTINGS_PAGES:
                 state = "normal" if show_advanced else "hidden"
                 self.settings_pages_notebook.tab(page, state=state)
+                if page_name in self.settings_nav_buttons:
+                    self.settings_nav_buttons[page_name].state(["!disabled"] if show_advanced else ["disabled"])
         visible_tabs = [tab_id for tab_id in self.settings_pages_notebook.tabs() if self.settings_pages_notebook.tab(tab_id, "state") == "normal"]
         current = self.settings_pages_notebook.select()
         if current and self.settings_pages_notebook.tab(current, "state") != "normal" and visible_tabs:
@@ -1270,35 +1333,87 @@ class DesktopWorkbench:
 
     def _build_layout(self) -> None:
         """Construct the top-level toolbar, notebook, and status bar widgets."""
+        shell = ttk.Frame(self.root, padding=12, style="TFrame")
+        shell.pack(fill="both", expand=True)
+        shell.columnconfigure(0, weight=1)
+        shell.rowconfigure(2, weight=1)
 
-        toolbar = ttk.Frame(self.root, padding=10, style="Surface.TFrame")
-        toolbar.pack(fill="x")
-        start_button = ttk.Button(toolbar, text="Start Run", command=self._start_run, style="Accent.TButton")
-        start_button.pack(side="left", padx=4)
+        header = ttk.Frame(shell, padding=16, style="Header.TFrame")
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        header.columnconfigure(1, weight=0)
+
+        title_block = ttk.Frame(header, style="Header.TFrame")
+        title_block.grid(row=0, column=0, sticky="w")
+        ttk.Label(title_block, text="PRISMA Literature Review Workbench", style="HeroTitle.TLabel").grid(
+            row=0,
+            column=0,
+            sticky="w",
+        )
+        ttk.Label(
+            title_block,
+            text=(
+                "Organize the review brief, discovery sources, AI screening, credentials, and output paths from one "
+                "guided workspace. Use the page rail on the left to move between logical areas instead of scanning a "
+                "single oversized form."
+            ),
+            wraplength=700,
+            justify="left",
+            style="HeroSubtitle.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(6, 0))
+
+        header_controls = ttk.Frame(header, style="Header.TFrame")
+        header_controls.grid(row=0, column=1, sticky="e", padx=(16, 0))
+        header_controls.columnconfigure(1, weight=1)
+        ttk.Label(header_controls, text="Profile", style="HeroSubtitle.TLabel").grid(row=0, column=0, sticky="w")
+        self.profile_combo = ttk.Combobox(header_controls, width=32, state="readonly")
+        self.profile_combo.grid(row=1, column=0, sticky="ew", pady=(4, 0))
+        self.profile_combo.bind("<<ComboboxSelected>>", lambda _event: self._load_profile())
+        hover_toggle = ttk.Checkbutton(
+            header_controls,
+            text="Hover Help",
+            variable=self.hover_help_enabled,
+            command=self._toggle_hover_help,
+        )
+        hover_toggle.grid(row=2, column=0, sticky="w", pady=(10, 0))
+
+        action_bar = ttk.Frame(shell, padding=(0, 10, 0, 10), style="TFrame")
+        action_bar.grid(row=1, column=0, sticky="ew")
+        action_bar.columnconfigure(0, weight=1)
+        action_bar.columnconfigure(1, weight=0)
+
+        primary_actions = ttk.Frame(action_bar, style="TFrame")
+        primary_actions.grid(row=0, column=0, sticky="w")
+        utility_actions = ttk.Frame(action_bar, style="TFrame")
+        utility_actions.grid(row=0, column=1, sticky="e")
+
+        start_button = ttk.Button(primary_actions, text="Start Run", command=self._start_run, style="Accent.TButton")
+        start_button.pack(side="left", padx=(0, 6))
         analyze_button = ttk.Button(
-            toolbar,
+            primary_actions,
             text="Analyze Stored Results",
             command=lambda: self._start_run(skip_discovery_override=True, run_mode_override="analyze"),
             style="Secondary.TButton",
         )
-        analyze_button.pack(side="left", padx=4)
-        force_stop_button = ttk.Button(toolbar, text="Force Stop", command=self._force_stop, style="Danger.TButton")
-        force_stop_button.pack(side="left", padx=4)
-        load_config_button = ttk.Button(toolbar, text="Load Config", command=self._load_config_file, style="Secondary.TButton")
-        load_config_button.pack(side="left", padx=4)
-        save_profile_button = ttk.Button(toolbar, text="Save Profile", command=self._save_profile, style="Secondary.TButton")
-        save_profile_button.pack(side="left", padx=4)
-        load_profile_button = ttk.Button(toolbar, text="Load Profile", command=self._load_profile, style="Secondary.TButton")
-        load_profile_button.pack(side="left", padx=4)
-        refresh_button = ttk.Button(toolbar, text="Refresh Results", command=self._refresh_results_from_disk, style="Secondary.TButton")
-        refresh_button.pack(side="left", padx=4)
+        analyze_button.pack(side="left", padx=(0, 6))
+        force_stop_button = ttk.Button(primary_actions, text="Force Stop", command=self._force_stop, style="Danger.TButton")
+        force_stop_button.pack(side="left")
+
+        load_config_button = ttk.Button(utility_actions, text="Load Config", command=self._load_config_file, style="Secondary.TButton")
+        load_config_button.pack(side="left", padx=(0, 6))
+        save_profile_button = ttk.Button(utility_actions, text="Save Profile", command=self._save_profile, style="Secondary.TButton")
+        save_profile_button.pack(side="left", padx=(0, 6))
+        load_profile_button = ttk.Button(utility_actions, text="Load Profile", command=self._load_profile, style="Secondary.TButton")
+        load_profile_button.pack(side="left", padx=(0, 6))
+        refresh_button = ttk.Button(utility_actions, text="Refresh Results", command=self._refresh_results_from_disk, style="Secondary.TButton")
+        refresh_button.pack(side="left", padx=(0, 6))
         open_results_button = ttk.Button(
-            toolbar,
+            utility_actions,
             text="Open Results Folder",
             command=self._open_results_dir,
             style="Secondary.TButton",
         )
-        open_results_button.pack(side="left", padx=4)
+        open_results_button.pack(side="left")
         self.toolbar_buttons = {
             "Start Run": start_button,
             "Analyze Stored Results": analyze_button,
@@ -1309,12 +1424,7 @@ class DesktopWorkbench:
             "Refresh Results": refresh_button,
             "Open Results Folder": open_results_button,
         }
-        ttk.Checkbutton(
-            toolbar,
-            text="Hover Help",
-            variable=self.hover_help_enabled,
-            command=self._toggle_hover_help,
-        ).pack(side="right", padx=4)
+        self._bind_hover_help(hover_toggle, "Turn detailed hover explanations on or off without hiding the handbook.")
         self._bind_hover_help(start_button, "Run the full pipeline using the current UI settings.")
         self._bind_hover_help(
             analyze_button,
@@ -1330,18 +1440,13 @@ class DesktopWorkbench:
         self._bind_hover_help(refresh_button, "Reload result files from disk without starting a new run.")
         self._bind_hover_help(open_results_button, "Open the configured results directory in the file manager.")
 
-        ttk.Label(toolbar, text="Profile:").pack(side="left", padx=(16, 4))
-        self.profile_combo = ttk.Combobox(toolbar, width=30, state="readonly")
-        self.profile_combo.pack(side="left")
-        self.profile_combo.bind("<<ComboboxSelected>>", lambda _event: self._load_profile())
-
         status_bar = ttk.Label(self.root, textvariable=self.status_var, anchor="w", style="Status.TLabel")
         status_bar.pack(fill="x", side="bottom")
         self.status_label = status_bar
 
-        notebook = ttk.Notebook(self.root, style="Workbench.TNotebook")
+        notebook = ttk.Notebook(shell, style="Workbench.TNotebook")
         self.notebook = notebook
-        notebook.pack(fill="both", expand=True)
+        notebook.grid(row=2, column=0, sticky="nsew")
 
         self.settings_tab = ttk.Frame(notebook)
         self.handbook_tab = ttk.Frame(notebook)
@@ -1370,31 +1475,53 @@ class DesktopWorkbench:
         """Render the grouped configuration form used to build a `ResearchConfig`."""
         container = ttk.Frame(self.settings_tab, padding=12, style="Surface.TFrame")
         container.pack(fill="both", expand=True)
-        container.columnconfigure(0, weight=1)
-        container.rowconfigure(2, weight=1)
+        container.columnconfigure(0, weight=0)
+        container.columnconfigure(1, weight=1)
+        container.columnconfigure(2, weight=0)
+        container.rowconfigure(1, weight=1)
 
         ttk.Label(
             container,
             text=(
-                "Every CLI-relevant runtime setting is exposed here. The settings are split into dedicated pages so "
-                "you can work with actual GUI controls such as dropdowns, radio buttons, switches, sliders, and "
-                "browse dialogs instead of hunting through one long text-heavy form. Exports are controlled from "
-                "'Storage and Output', API credentials live on 'Connections and Keys', and the optional advanced page "
-                "is hidden until you ask for it."
+                "Every CLI-relevant runtime setting is exposed here. Use the left page rail to move between logical "
+                "areas, keep the center focused on the current page, and use the right inspector for search, quick "
+                "edits, guides, and live summaries. Exports live on 'Storage and Output', API credentials live on "
+                "'Connections and Keys', and advanced runtime tuning stays hidden until you ask for it."
             ),
             wraplength=1180,
             justify="left",
             style="Muted.TLabel",
-        ).grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        ).grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 10))
 
-        quick_access = ttk.LabelFrame(container, text="Quick Access", padding=10, style="Card.TLabelframe")
-        quick_access.grid(row=1, column=0, sticky="ew", pady=(0, 8))
-        quick_access.columnconfigure(0, weight=1)
-        quick_access.columnconfigure(1, weight=1)
-        self._build_settings_quick_access(quick_access)
+        left_sidebar = ttk.Frame(container, style="Sidebar.TFrame")
+        left_sidebar.grid(row=1, column=0, sticky="nsw", padx=(0, 12))
+        left_sidebar.rowconfigure(1, weight=1)
 
-        page_notebook = ttk.Notebook(container, style="Workbench.TNotebook")
-        page_notebook.grid(row=2, column=0, sticky="nsew")
+        center_frame = ttk.Frame(container, style="Surface.TFrame")
+        center_frame.grid(row=1, column=1, sticky="nsew")
+        center_frame.columnconfigure(0, weight=1)
+        center_frame.rowconfigure(1, weight=1)
+
+        right_sidebar = ttk.Frame(container, style="Sidebar.TFrame")
+        right_sidebar.grid(row=1, column=2, sticky="nse", padx=(12, 0))
+        right_sidebar.rowconfigure(0, weight=1)
+
+        self._build_settings_navigation(left_sidebar)
+
+        page_header = ttk.LabelFrame(center_frame, text="Current settings page", padding=10, style="Card.TLabelframe")
+        page_header.grid(row=0, column=0, sticky="ew", pady=(0, 10))
+        ttk.Label(
+            page_header,
+            textvariable=self.active_settings_page_var,
+            style="HeroSubtitle.TLabel",
+        ).grid(row=0, column=0, sticky="w")
+        self._bind_hover_help(
+            page_header,
+            "This area keeps the currently selected settings page in focus so you can work page by page instead of scanning the whole form at once.",
+        )
+
+        page_notebook = ttk.Notebook(center_frame, style="Workbench.TNotebook")
+        page_notebook.grid(row=1, column=0, sticky="nsew")
         self.settings_pages_notebook = page_notebook
         page_notebook.bind("<<NotebookTabChanged>>", self._handle_settings_page_changed)
 
@@ -1421,8 +1548,81 @@ class DesktopWorkbench:
             for row, section_name in enumerate(section_names, start=1):
                 self._render_settings_group(page_content, page_name, section_name, grouped_fields[section_name], row)
 
+        inspector = ttk.LabelFrame(right_sidebar, text="Inspector", padding=10, style="Card.TLabelframe")
+        inspector.grid(row=0, column=0, sticky="nsew")
+        inspector.columnconfigure(0, weight=1)
+        inspector.rowconfigure(0, weight=1)
+        self._build_settings_quick_access(inspector)
+
         self._populate_quick_access_controls()
         self._apply_settings_page_visibility()
+        self._handle_settings_page_changed()
+
+    def _build_settings_navigation(self, parent: ttk.Frame) -> None:
+        """Create the left-hand navigation rail used to move between settings pages."""
+
+        parent.columnconfigure(0, weight=1)
+
+        page_card = ttk.LabelFrame(parent, text="Settings pages", padding=10, style="Card.TLabelframe")
+        page_card.grid(row=0, column=0, sticky="new")
+        page_card.columnconfigure(0, weight=1)
+        ttk.Label(
+            page_card,
+            text=(
+                "Work through the form by page. Each page groups related settings so keys, outputs, discovery, and AI "
+                "controls stay easy to find."
+            ),
+            wraplength=240,
+            justify="left",
+            style="Muted.TLabel",
+        ).grid(row=0, column=0, sticky="ew", pady=(0, 8))
+
+        for index, (page_name, _sections) in enumerate(self.SETTINGS_PAGES, start=1):
+            button = ttk.Button(
+                page_card,
+                text=page_name,
+                command=lambda name=page_name: self._select_settings_page(name),
+                style="Nav.TButton",
+            )
+            button.grid(row=index * 2 - 1, column=0, sticky="ew", pady=(0, 4))
+            self.settings_nav_buttons[page_name] = button
+            description = ttk.Label(
+                page_card,
+                text=self.SETTINGS_PAGE_DESCRIPTIONS.get(page_name, ""),
+                wraplength=240,
+                justify="left",
+                style="Muted.TLabel",
+            )
+            description.grid(row=index * 2, column=0, sticky="ew", pady=(0, 8))
+            self._bind_hover_help(button, self.SETTINGS_PAGE_DESCRIPTIONS.get(page_name, page_name))
+            self._bind_hover_help(description, self.SETTINGS_PAGE_DESCRIPTIONS.get(page_name, page_name))
+
+        hint_card = ttk.LabelFrame(parent, text="How to use this layout", padding=10, style="Card.TLabelframe")
+        hint_card.grid(row=1, column=0, sticky="sew", pady=(12, 0))
+        ttk.Label(
+            hint_card,
+            text=(
+                "Use the left rail to switch sections, keep the center on the active page, and use the right inspector "
+                "for search, quick edits, guides, and live path summaries."
+            ),
+            wraplength=240,
+            justify="left",
+            style="Muted.TLabel",
+        ).grid(row=0, column=0, sticky="ew")
+        self._bind_hover_help(hint_card, "Layout guide for the Settings tab.")
+
+    def _select_settings_page(self, page_name: str) -> None:
+        """Select one settings page from the left navigation rail."""
+
+        if page_name in self.ADVANCED_SETTINGS_PAGES and not self.show_advanced_settings.get():
+            self.show_advanced_settings.set(True)
+            self._apply_settings_page_visibility()
+        if self.settings_pages_notebook is None:
+            return
+        page = self.settings_page_frames.get(page_name)
+        if page is None:
+            return
+        self.settings_pages_notebook.select(page)
         self._handle_settings_page_changed()
 
     def _render_settings_group(
@@ -1798,74 +1998,111 @@ class DesktopWorkbench:
 
     def _build_settings_quick_access(self, parent: ttk.LabelFrame) -> None:
         """Create searchable shortcuts and live summaries for the most requested settings."""
+        parent.rowconfigure(1, weight=1)
+        parent.columnconfigure(0, weight=1)
 
         intro = ttk.Label(
             parent,
             text=(
-                "Use the direct controls below for the most important settings, or use search and jump buttons to find "
-                "model selection, chained passes, thresholds, CSV/SQLite outputs, PDF folders, API credentials, and "
-                "verbose logging immediately. The results folder controls CSV/JSON/Markdown output, and the main SQLite "
-                "database path controls the runtime database."
+                "Use the inspector tabs to search for settings, make quick edits to the most common controls, open "
+                "targeted guides, and verify where outputs will be written."
             ),
-            wraplength=1040,
+            wraplength=320,
             justify="left",
+            style="Muted.TLabel",
         )
-        intro.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        intro.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        self._bind_hover_help(
+            intro,
+            "The inspector keeps secondary tasks such as search, quick edits, and path summaries out of the main form so the page layout stays easier to scan.",
+        )
 
-        search_bar = ttk.Frame(parent)
-        search_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        search_bar.columnconfigure(1, weight=1)
-        search_bar.columnconfigure(2, weight=1)
-        ttk.Label(search_bar, text="Find setting:").grid(row=0, column=0, sticky="w")
-        search_entry = ttk.Entry(search_bar, textvariable=self.settings_search_var)
-        search_entry.grid(row=0, column=1, sticky="ew", padx=(6, 6))
+        tools_notebook = ttk.Notebook(parent, style="Workbench.TNotebook")
+        tools_notebook.grid(row=1, column=0, sticky="nsew")
+        self.settings_tools_notebook = tools_notebook
+
+        find_tab = ttk.Frame(tools_notebook, padding=8, style="Surface.TFrame")
+        quick_tab = ttk.Frame(tools_notebook, padding=8, style="Surface.TFrame")
+        guides_tab = ttk.Frame(tools_notebook, padding=8, style="Surface.TFrame")
+        summary_tab = ttk.Frame(tools_notebook, padding=8, style="Surface.TFrame")
+        tools_notebook.add(find_tab, text="Find")
+        tools_notebook.add(quick_tab, text="Quick Edit")
+        tools_notebook.add(guides_tab, text="Guides")
+        tools_notebook.add(summary_tab, text="Summary")
+
+        find_tab.columnconfigure(0, weight=1)
+        find_tab.columnconfigure(1, weight=1)
+        ttk.Label(
+            find_tab,
+            text="Search by name, meaning, or effect to jump directly to the setting you need.",
+            wraplength=300,
+            justify="left",
+            style="Muted.TLabel",
+        ).grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        ttk.Label(find_tab, text="Find setting:").grid(row=1, column=0, sticky="w")
+        search_entry = ttk.Entry(find_tab, textvariable=self.settings_search_var)
+        search_entry.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(4, 6))
         search_entry.bind("<KeyRelease>", lambda _event: self._refresh_settings_search_results())
         search_entry.bind("<Return>", lambda _event: self._focus_selected_setting())
         self._bind_hover_help(
             search_entry,
             "Search by setting name or description. Hidden advanced settings can also be found here and will be shown automatically when you jump to them.",
         )
-        self.settings_search_combo = ttk.Combobox(search_bar, textvariable=self.settings_search_choice_var, state="readonly")
-        self.settings_search_combo.grid(row=0, column=2, sticky="ew", padx=(0, 6))
+        self.settings_search_combo = ttk.Combobox(find_tab, textvariable=self.settings_search_choice_var, state="readonly")
+        self.settings_search_combo.grid(row=3, column=0, columnspan=2, sticky="ew")
         self.settings_search_combo.bind("<<ComboboxSelected>>", lambda _event: self._focus_selected_setting())
         self._bind_hover_help(
             self.settings_search_combo,
             "Matching settings are listed with their section names so you can jump straight to storage paths, API credentials, thresholds, or logging options.",
         )
-        go_button = ttk.Button(search_bar, text="Go", command=self._focus_selected_setting)
-        go_button.grid(row=0, column=3, padx=(0, 8))
+        go_button = ttk.Button(find_tab, text="Go to selected setting", command=self._focus_selected_setting)
+        go_button.grid(row=4, column=0, sticky="w", pady=(8, 0))
         self._bind_hover_help(go_button, "Jump to the selected setting and show its explanation.")
         advanced_toggle = ttk.Checkbutton(
-            search_bar,
+            find_tab,
             text="Show advanced settings",
             variable=self.show_advanced_settings,
             command=self._apply_settings_page_visibility,
         )
-        advanced_toggle.grid(row=0, column=4, sticky="e")
+        advanced_toggle.grid(row=4, column=1, sticky="e", pady=(8, 0))
         self._bind_hover_help(
             advanced_toggle,
             "Reveal lower-level pages for rate limits, worker overrides, import-only sources, and advanced model runtime tuning.",
         )
 
-        jump_bar = ttk.Frame(parent)
-        jump_bar.grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 10))
+        jump_frame = ttk.LabelFrame(find_tab, text="Fast jumps", padding=8, style="Card.TLabelframe")
+        jump_frame.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        jump_frame.columnconfigure(0, weight=1)
+        jump_frame.columnconfigure(1, weight=1)
         jumps = [
-            ("Jump to Models", lambda: self._focus_field("llm_provider")),
-            ("Jump to Thresholds", lambda: self._focus_field("relevance_threshold")),
-            ("Jump to Outputs", lambda: self._focus_field("output_csv")),
-            ("Jump to Storage Paths", lambda: self._focus_field("database_path")),
-            ("Jump to Connections", lambda: self._focus_field("openai_api_key")),
-            ("Jump to Runtime Tuning", lambda: self._focus_field("max_workers")),
-            ("Jump to Logging", lambda: self._focus_field("verbosity")),
-            ("Edit Pass Chain", self._open_pass_builder),
+            ("Models", lambda: self._focus_field("llm_provider")),
+            ("Thresholds", lambda: self._focus_field("relevance_threshold")),
+            ("Outputs", lambda: self._focus_field("output_csv")),
+            ("Storage paths", lambda: self._focus_field("database_path")),
+            ("Connections", lambda: self._focus_field("openai_api_key")),
+            ("Runtime tuning", lambda: self._focus_field("max_workers")),
+            ("Logging", lambda: self._focus_field("verbosity")),
+            ("Edit pass chain", self._open_pass_builder),
         ]
-        for text, command in jumps:
-            button = ttk.Button(jump_bar, text=text, command=command)
-            button.pack(side="left", padx=(0, 6))
+        for index, (text, command) in enumerate(jumps):
+            button = ttk.Button(jump_frame, text=text, command=command, style="Secondary.TButton")
+            button.grid(row=index // 2, column=index % 2, sticky="ew", padx=4, pady=4)
             self._bind_hover_help(button, f"Jump to the GUI area for {text.lower()}.")
 
-        guide_bar = ttk.Frame(parent)
-        guide_bar.grid(row=3, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        quick_tab.columnconfigure(0, weight=1)
+        controls_frame = ttk.Frame(quick_tab, style="Surface.TFrame")
+        controls_frame.grid(row=0, column=0, sticky="nsew")
+        controls_frame.columnconfigure(0, weight=1)
+        self.quick_access_controls_frame = controls_frame
+
+        guides_tab.columnconfigure(0, weight=1)
+        ttk.Label(
+            guides_tab,
+            text="Open the focused handbook entries when you need a deeper explanation or examples.",
+            wraplength=300,
+            justify="left",
+            style="Muted.TLabel",
+        ).grid(row=0, column=0, sticky="ew", pady=(0, 8))
         guide_buttons = [
             ("Open Model Guide", lambda: self._open_handbook_entry("guide:models")),
             ("Open Output Guide", lambda: self._open_handbook_entry("guide:outputs")),
@@ -1873,30 +2110,33 @@ class DesktopWorkbench:
             ("Open Runtime Guide", lambda: self._open_handbook_entry("guide:runtime_tuning")),
             ("Open Actions Guide", lambda: self._open_handbook_entry("guide:actions")),
         ]
-        for text, command in guide_buttons:
-            button = ttk.Button(guide_bar, text=text, command=command)
-            button.pack(side="left", padx=(0, 6))
+        for row, (text, command) in enumerate(guide_buttons, start=1):
+            button = ttk.Button(guides_tab, text=text, command=command, style="Secondary.TButton")
+            button.grid(row=row, column=0, sticky="ew", pady=4)
             self._bind_hover_help(button, f"Open the handbook entry for {text.lower()}.")
 
-        controls_frame = ttk.LabelFrame(parent, text="Most-Used Controls", padding=8)
-        controls_frame.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        controls_frame.columnconfigure(1, weight=1)
-        controls_frame.columnconfigure(3, weight=1)
-        self.quick_access_controls_frame = controls_frame
-
-        model_frame = ttk.LabelFrame(parent, text="Current Model Setup", padding=8)
-        model_frame.grid(row=5, column=0, sticky="nsew", padx=(0, 6))
-        output_frame = ttk.LabelFrame(parent, text="Current Output Paths", padding=8)
-        output_frame.grid(row=5, column=1, sticky="nsew", padx=(6, 0))
-        parent.rowconfigure(5, weight=1)
+        summary_tab.columnconfigure(0, weight=1)
+        summary_tab.rowconfigure(1, weight=1)
+        summary_tab.rowconfigure(3, weight=1)
+        ttk.Label(
+            summary_tab,
+            text="Use these summaries to confirm which models and output paths will be used before you start a run.",
+            wraplength=300,
+            justify="left",
+            style="Muted.TLabel",
+        ).grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        model_frame = ttk.LabelFrame(summary_tab, text="Current Model Setup", padding=8, style="Card.TLabelframe")
+        model_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 8))
+        output_frame = ttk.LabelFrame(summary_tab, text="Current Output Paths", padding=8, style="Card.TLabelframe")
+        output_frame.grid(row=3, column=0, sticky="nsew")
         model_frame.rowconfigure(0, weight=1)
         output_frame.rowconfigure(0, weight=1)
         model_frame.columnconfigure(0, weight=1)
         output_frame.columnconfigure(0, weight=1)
 
-        self.model_summary_text = scrolledtext.ScrolledText(model_frame, height=10, wrap="word", state="disabled")
+        self.model_summary_text = scrolledtext.ScrolledText(model_frame, height=9, wrap="word", state="disabled")
         self.model_summary_text.grid(row=0, column=0, sticky="nsew")
-        self.output_summary_text = scrolledtext.ScrolledText(output_frame, height=10, wrap="word", state="disabled")
+        self.output_summary_text = scrolledtext.ScrolledText(output_frame, height=11, wrap="word", state="disabled")
         self.output_summary_text.grid(row=0, column=0, sticky="nsew")
 
     def _populate_quick_access_controls(self) -> None:
@@ -1911,23 +2151,23 @@ class DesktopWorkbench:
         ttk.Label(
             frame,
             text=(
-                "These controls mirror the full settings below. Use them to pick the model, adjust thresholds, decide "
-                "whether PDFs should be downloaded, and set the main storage paths without hunting through the form. "
-                "If you are looking for API keys or provider URLs, jump to the dedicated 'Connections and Keys' page."
+                "These quick-edit controls mirror the most requested settings. Keep this tab for high-frequency edits, "
+                "then move to the full pages for deeper configuration."
             ),
-            wraplength=1040,
+            wraplength=300,
             justify="left",
-        ).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 8))
+            style="Muted.TLabel",
+        ).grid(row=0, column=0, sticky="ew", pady=(0, 8))
 
-        def add_label(row: int, column: int, field_name: str) -> None:
-            label = ttk.Label(frame, text=self.LABELS.get(field_name, field_name.replace("_", " ").title()))
+        def add_label(parent: ttk.Frame, row: int, column: int, field_name: str) -> None:
+            label = ttk.Label(parent, text=self.LABELS.get(field_name, field_name.replace("_", " ").title()))
             label.grid(row=row, column=column, sticky="w", padx=4, pady=4)
             self._bind_hover_help(label, self._help_text_for_field(field_name))
 
-        def add_path_control(row: int, field_name: str) -> None:
-            add_label(row, 0, field_name)
+        def add_path_control(parent: ttk.Frame, row: int, field_name: str) -> None:
+            add_label(parent, row, 0, field_name)
             variable = self.scalar_vars[field_name]
-            container = ttk.Frame(frame)
+            container = ttk.Frame(parent)
             container.grid(row=row, column=1, columnspan=3, sticky="ew", padx=4, pady=4)
             container.columnconfigure(0, weight=1)
             entry = ttk.Entry(container, textvariable=variable)
@@ -1941,53 +2181,62 @@ class DesktopWorkbench:
             self._bind_hover_help(entry, self._help_text_for_field(field_name))
             self._bind_hover_help(browse_button, self._help_text_for_field(field_name))
 
-        add_label(1, 0, "llm_provider")
+        models_card = ttk.LabelFrame(frame, text="Models and pass chain", padding=8, style="Card.TLabelframe")
+        models_card.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        models_card.columnconfigure(1, weight=1)
+        models_card.columnconfigure(2, weight=1)
+
+        add_label(models_card, 0, 0, "llm_provider")
         llm_provider_widget = ttk.Combobox(
-            frame,
+            models_card,
             textvariable=self.scalar_vars["llm_provider"],
             values=self.COMBOBOX_FIELDS["llm_provider"],
             state="normal",
         )
-        llm_provider_widget.grid(row=1, column=1, sticky="ew", padx=4, pady=4)
+        llm_provider_widget.grid(row=0, column=1, columnspan=2, sticky="ew", padx=4, pady=4)
         self._bind_hover_help(llm_provider_widget, self._help_text_for_field("llm_provider"))
 
-        edit_pass_button = ttk.Button(frame, text="Edit Pass Chain", command=self._open_pass_builder)
-        edit_pass_button.grid(row=1, column=2, sticky="w", padx=4, pady=4)
+        edit_pass_button = ttk.Button(models_card, text="Edit Pass Chain", command=self._open_pass_builder)
+        edit_pass_button.grid(row=1, column=0, sticky="w", padx=4, pady=4)
         self._bind_hover_help(edit_pass_button, self._help_text_for_field("analysis_passes"))
-        threshold_button = ttk.Button(frame, text="Jump to Thresholds", command=lambda: self._focus_field("relevance_threshold"))
-        threshold_button.grid(row=1, column=3, sticky="w", padx=4, pady=4)
+        threshold_button = ttk.Button(models_card, text="Jump to Thresholds", command=lambda: self._focus_field("relevance_threshold"))
+        threshold_button.grid(row=1, column=1, sticky="w", padx=4, pady=4)
         self._bind_hover_help(threshold_button, self._help_text_for_field("relevance_threshold"))
 
-        connections_button = ttk.Button(frame, text="Open Connections and Keys", command=lambda: self._focus_field("openai_api_key"))
-        connections_button.grid(row=2, column=2, sticky="w", padx=4, pady=4)
+        connections_button = ttk.Button(models_card, text="Open Connections and Keys", command=lambda: self._focus_field("openai_api_key"))
+        connections_button.grid(row=1, column=2, sticky="w", padx=4, pady=4)
         self._bind_hover_help(
             connections_button,
             "Open the dedicated page for provider base URLs, API keys, Crossref mailto, and Unpaywall email.",
         )
 
         for row, field_name in enumerate(("openai_model", "gemini_model", "ollama_model", "huggingface_model"), start=3):
-            add_label(row, 0, field_name)
+            add_label(models_card, row - 1, 0, field_name)
             widget = ttk.Combobox(
-                frame,
+                models_card,
                 textvariable=self.scalar_vars[field_name],
                 values=self.COMBOBOX_FIELDS[field_name],
                 state="normal",
             )
-            widget.grid(row=row, column=1, columnspan=3, sticky="ew", padx=4, pady=4)
+            widget.grid(row=row - 1, column=1, columnspan=2, sticky="ew", padx=4, pady=4)
             self._bind_hover_help(widget, self._help_text_for_field(field_name))
 
-        download_row = 3 + len(("openai_model", "gemini_model", "ollama_model", "huggingface_model"))
+        outputs_card = ttk.LabelFrame(frame, text="Outputs and storage", padding=8, style="Card.TLabelframe")
+        outputs_card.grid(row=2, column=0, sticky="ew")
+        outputs_card.columnconfigure(1, weight=1)
+        outputs_card.columnconfigure(2, weight=1)
+        outputs_card.columnconfigure(3, weight=1)
 
         download_widget = ttk.Checkbutton(
-            frame,
+            outputs_card,
             text=self.LABELS["download_pdfs"],
             variable=self.scalar_vars["download_pdfs"],
         )
-        download_widget.grid(row=download_row, column=0, sticky="w", padx=4, pady=4)
+        download_widget.grid(row=0, column=0, sticky="w", padx=4, pady=4)
         self._bind_hover_help(download_widget, self._help_text_for_field("download_pdfs"))
-        add_label(download_row, 1, "pdf_download_mode")
-        pdf_mode_frame = ttk.Frame(frame)
-        pdf_mode_frame.grid(row=download_row, column=2, columnspan=2, sticky="w", padx=4, pady=4)
+        add_label(outputs_card, 0, 1, "pdf_download_mode")
+        pdf_mode_frame = ttk.Frame(outputs_card)
+        pdf_mode_frame.grid(row=0, column=2, columnspan=2, sticky="w", padx=4, pady=4)
         for index, option in enumerate(self.RADIO_FIELDS["pdf_download_mode"]):
             button = ttk.Radiobutton(
                 pdf_mode_frame,
@@ -1998,24 +2247,23 @@ class DesktopWorkbench:
             button.grid(row=0, column=index, sticky="w", padx=(0, 8))
             self._bind_hover_help(button, self._help_text_for_field("pdf_download_mode"))
 
-        csv_widget = ttk.Checkbutton(frame, text=self.LABELS["output_csv"], variable=self.scalar_vars["output_csv"])
-        csv_widget.grid(row=download_row + 1, column=0, sticky="w", padx=4, pady=4)
+        csv_widget = ttk.Checkbutton(outputs_card, text=self.LABELS["output_csv"], variable=self.scalar_vars["output_csv"])
+        csv_widget.grid(row=1, column=0, sticky="w", padx=4, pady=4)
         sqlite_widget = ttk.Checkbutton(
-            frame,
+            outputs_card,
             text=self.LABELS["output_sqlite_exports"],
             variable=self.scalar_vars["output_sqlite_exports"],
         )
-        sqlite_widget.grid(row=download_row + 1, column=1, sticky="w", padx=4, pady=4)
+        sqlite_widget.grid(row=1, column=1, sticky="w", padx=4, pady=4)
         self._bind_hover_help(csv_widget, self._help_text_for_field("output_csv"))
         self._bind_hover_help(sqlite_widget, self._help_text_for_field("output_sqlite_exports"))
 
-        add_path_control(download_row + 2, "database_path")
-        add_path_control(download_row + 3, "results_dir")
-        add_path_control(download_row + 4, "papers_dir")
-        add_path_control(download_row + 5, "relevant_pdfs_dir")
+        add_path_control(outputs_card, 2, "database_path")
+        add_path_control(outputs_card, 3, "results_dir")
+        add_path_control(outputs_card, 4, "papers_dir")
+        add_path_control(outputs_card, 5, "relevant_pdfs_dir")
 
-        for column in range(4):
-            frame.columnconfigure(column, weight=1 if column in {1, 3} else 0)
+        frame.columnconfigure(0, weight=1)
 
     def _settings_index(self) -> list[tuple[str, str]]:
         """Return searchable setting targets in a human-readable label format."""
@@ -2067,9 +2315,8 @@ class DesktopWorkbench:
         if page_name in self.ADVANCED_SETTINGS_PAGES and not self.show_advanced_settings.get():
             self.show_advanced_settings.set(True)
             self._apply_settings_page_visibility()
-        if page_name and self.settings_pages_notebook is not None and page_name in self.settings_page_frames:
-            self.settings_pages_notebook.select(self.settings_page_frames[page_name])
-            self._handle_settings_page_changed()
+        if page_name:
+            self._select_settings_page(page_name)
         self._scroll_widget_into_view(widget)
         try:
             widget.focus_set()

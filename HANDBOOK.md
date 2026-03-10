@@ -98,6 +98,12 @@ Settings pages:
 - `Storage and Output`
 - `Advanced Runtime`
 
+Settings layout:
+
+- the left rail is the primary page navigation for the settings workflow
+- the center pane keeps the current settings page in focus
+- the right inspector contains `Find`, `Quick Edit`, `Guides`, and `Summary` tabs so secondary tools do not overwhelm the main form
+
 Important visibility behavior:
 
 - each settings page is vertically scrollable
@@ -689,6 +695,7 @@ This helper reruns the test suite under coverage and writes a JaCoCo-style bundl
 - console summary
 - low-coverage file list
 - missing line ranges per file
+- an isolated coverage data file inside the chosen results directory, so separate report runs do not collide
 - HTML report
 - JSON summary
 - Markdown report

@@ -112,9 +112,11 @@ The guided desktop workbench provides:
   - `Connections and Keys`
   - `Storage and Output`
   - `Advanced Runtime`
+- a left-hand page rail so the settings follow the review workflow instead of one long stacked panel
+- a right-hand inspector with dedicated `Find`, `Quick Edit`, `Guides`, and `Summary` tabs
 - scrollable settings pages so the window stays usable on smaller screens
 - `Show advanced settings` toggle so lower-level runtime options stay out of the way until needed
-- quick-access controls for the most-used model and output settings
+- quick-edit controls for the most-used model and output settings, without forcing every option onto the main form at once
 - searchable `Handbook` tab
 - hover help and keyboard-focus help for settings, with detailed English explanations that describe the purpose of each flag, what changes when a switch is on or off, and concrete examples for common workflows
 - live `Run Log` tab
@@ -520,6 +522,8 @@ Generate the full-repository report, including `tests/`:
 ```powershell
 py -3 coverage_report.py --include-tests --results-dir results\coverage_report_all --top-files 25 --fail-under 99
 ```
+
+Each coverage-report run uses its own coverage data file inside the selected results directory, so separate report runs do not collide on the same root `.coverage` file.
 
 That writes:
 

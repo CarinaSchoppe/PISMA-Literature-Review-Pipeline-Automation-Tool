@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -227,6 +228,7 @@ def run_coverage_report(argv: Sequence[str] | None = None) -> int:
     markdown_path = results_dir / "coverage_report.md"
     text_path = results_dir / "coverage_report.txt"
     summary_json_path = results_dir / "coverage_summary.json"
+    coverage_data_path = results_dir / ".coverage"
 
     results_dir.mkdir(parents=True, exist_ok=True)
     html_dir.mkdir(parents=True, exist_ok=True)
@@ -234,6 +236,8 @@ def run_coverage_report(argv: Sequence[str] | None = None) -> int:
     omit_patterns = [] if args.include_tests else (args.omit or ["tests/*"])
     omit_args = [f"--omit={','.join(omit_patterns)}"] if omit_patterns else []
     python_executable = sys.executable
+    coverage_env = os.environ.copy()
+    coverage_env["COVERAGE_FILE"] = str(coverage_data_path)
 
     commands = [
         [python_executable, "-m", "coverage", "erase"],
@@ -244,7 +248,7 @@ def run_coverage_report(argv: Sequence[str] | None = None) -> int:
     ]
 
     for command in commands[:-1]:
-        subprocess.run(command, cwd=project_root, check=True, text=True)
+        subprocess.run(command, cwd=project_root, check=True, text=True, env=coverage_env)
 
     report_result = subprocess.run(
         commands[-1],
@@ -252,6 +256,7 @@ def run_coverage_report(argv: Sequence[str] | None = None) -> int:
         check=True,
         text=True,
         capture_output=True,
+        env=coverage_env,
     )
 
     payload = json.loads(raw_json_path.read_text(encoding="utf-8"))
