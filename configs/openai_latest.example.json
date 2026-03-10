@@ -1,0 +1,50 @@
+{
+  "research_topic": "AI-assisted literature reviews",
+  "research_question": "Can the newest OpenAI flagship model improve screening consistency?",
+  "review_objective": "Use the latest OpenAI API model for structured paper relevance decisions.",
+  "inclusion_criteria": [
+    "mentions systematic review or evidence synthesis",
+    "evaluates LLMs or screening automation"
+  ],
+  "exclusion_criteria": [
+    "no abstract available",
+    "not relevant to review workflows"
+  ],
+  "search_keywords": [
+    "large language models",
+    "screening",
+    "systematic review",
+    "evidence synthesis"
+  ],
+  "boolean_operators": "AND",
+  "pages_to_retrieve": 2,
+  "results_per_page": 20,
+  "year_range_start": 2020,
+  "year_range_end": 2026,
+  "max_papers_to_analyze": 40,
+  "citation_snowballing_enabled": true,
+  "relevance_threshold": 72,
+  "download_pdfs": true,
+  "analyze_full_text": true,
+  "full_text_max_chars": 12000,
+  "llm_provider": "openai_compatible",
+  "openalex_enabled": true,
+  "semantic_scholar_enabled": true,
+  "crossref_enabled": true,
+  "include_pubmed": false,
+  "max_workers": 4,
+  "request_timeout_seconds": 60,
+  "resume_mode": true,
+  "disable_progress_bars": false,
+  "title_similarity_threshold": 0.92,
+  "data_dir": "data/openai_latest_run",
+  "papers_dir": "papers/openai_latest_run",
+  "results_dir": "results/openai_latest_run",
+  "database_path": "data/openai_latest_run/literature_review.db",
+  "api_settings": {
+    "crossref_mailto": "you@example.com",
+    "unpaywall_email": "you@example.com",
+    "openai_model": "gpt-5.4",
+    "llm_temperature": 0.1
+  }
+}

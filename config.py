@@ -1,0 +1,760 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+from pathlib import Path
+from typing import Any, Literal
+
+from pydantic import BaseModel, Field, field_validator
+
+from utils.text_processing import build_query, ensure_parent_directory, make_query_key
+
+
+BIOMEDICAL_TERMS = {
+    "biomedical",
+    "medicine",
+    "medical",
+    "clinical",
+    "drug",
+    "patient",
+    "therapy",
+    "health",
+    "diagnosis",
+    "pubmed",
+    "epidemiology",
+    "oncology",
+    "genomics",
+}
+
+SCREENING_ALGORITHM_VERSION = "2026-03-10-v2"
+
+
+class ApiSettings(BaseModel):
+    semantic_scholar_api_key: str | None = Field(default_factory=lambda: os.getenv("SEMANTIC_SCHOLAR_API_KEY"))
+    crossref_mailto: str | None = Field(default_factory=lambda: os.getenv("CROSSREF_MAILTO"))
+    unpaywall_email: str | None = Field(default_factory=lambda: os.getenv("UNPAYWALL_EMAIL"))
+    springer_api_key: str | None = Field(default_factory=lambda: os.getenv("SPRINGER_API_KEY"))
+    openai_api_key: str | None = Field(default_factory=lambda: os.getenv("OPENAI_API_KEY"))
+    openai_base_url: str = Field(default_factory=lambda: os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"))
+    openai_model: str = Field(default_factory=lambda: os.getenv("OPENAI_MODEL", "gpt-5.4"))
+    ollama_base_url: str = Field(default_factory=lambda: os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1"))
+    ollama_model: str = Field(default_factory=lambda: os.getenv("OLLAMA_MODEL", "qwen3:8b"))
+    ollama_api_key: str = Field(default_factory=lambda: os.getenv("OLLAMA_API_KEY", "ollama"))
+    huggingface_model: str = Field(default_factory=lambda: os.getenv("HF_MODEL_ID", "Qwen/Qwen3-8B"))
+    huggingface_task: str = Field(default_factory=lambda: os.getenv("HF_TASK", "text-generation"))
+    huggingface_device: str = Field(default_factory=lambda: os.getenv("HF_DEVICE", "auto"))
+    huggingface_dtype: str = Field(default_factory=lambda: os.getenv("HF_DTYPE", "auto"))
+    huggingface_max_new_tokens: int = Field(default_factory=lambda: int(os.getenv("HF_MAX_NEW_TOKENS", "700")))
+    huggingface_cache_dir: str | None = Field(default_factory=lambda: os.getenv("HF_HOME") or os.getenv("TRANSFORMERS_CACHE"))
+    huggingface_trust_remote_code: bool = Field(
+        default_factory=lambda: os.getenv("HF_TRUST_REMOTE_CODE", "false").strip().lower() in {"1", "true", "yes", "y"}
+    )
+    llm_temperature: float = Field(default_factory=lambda: float(os.getenv("LLM_TEMPERATURE", "0.1")))
+
+
+class AnalysisPassConfig(BaseModel):
+    name: str
+    llm_provider: Literal["heuristic", "openai_compatible", "ollama", "huggingface_local"] = "heuristic"
+    threshold: float = 70.0
+    decision_mode: Literal["strict", "triage"] = "strict"
+    maybe_threshold_margin: float = 10.0
+    enabled: bool = True
+
+
+class ResearchConfig(BaseModel):
+    research_topic: str
+    research_question: str = ""
+    review_objective: str = ""
+    inclusion_criteria: list[str] = Field(default_factory=list)
+    exclusion_criteria: list[str] = Field(default_factory=list)
+    banned_topics: list[str] = Field(default_factory=list)
+    search_keywords: list[str]
+    boolean_operators: str | None = None
+    pages_to_retrieve: int = 2
+    results_per_page: int = 25
+    year_range_start: int = 2018
+    year_range_end: int = 2026
+    max_papers_to_analyze: int = 50
+    citation_snowballing_enabled: bool = True
+    relevance_threshold: float = 70.0
+    download_pdfs: bool = False
+    analyze_full_text: bool = False
+    full_text_max_chars: int = 12000
+    llm_provider: Literal["auto", "heuristic", "openai_compatible", "ollama", "huggingface_local"] = "auto"
+    decision_mode: Literal["strict", "triage"] = "strict"
+    maybe_threshold_margin: float = 10.0
+    run_mode: Literal["collect", "analyze"] = "analyze"
+    verbosity: Literal["quiet", "normal", "verbose", "debug"] = "normal"
+    output_csv: bool = True
+    output_json: bool = True
+    output_markdown: bool = True
+    output_sqlite_exports: bool = True
+    analysis_passes: list[AnalysisPassConfig] = Field(default_factory=list)
+    openalex_enabled: bool = True
+    semantic_scholar_enabled: bool = True
+    crossref_enabled: bool = True
+    springer_enabled: bool = False
+    arxiv_enabled: bool = False
+    include_pubmed: bool | None = None
+    max_workers: int = 4
+    request_timeout_seconds: int = 30
+    resume_mode: bool = True
+    disable_progress_bars: bool = False
+    title_similarity_threshold: float = 0.92
+    fixture_data_path: Path | None = None
+    manual_source_path: Path | None = None
+    google_scholar_import_path: Path | None = None
+    researchgate_import_path: Path | None = None
+    data_dir: Path = Path("data")
+    papers_dir: Path = Path("papers")
+    results_dir: Path = Path("results")
+    database_path: Path = Path("data/literature_review.db")
+    api_settings: ApiSettings = Field(default_factory=ApiSettings)
+    query_key: str | None = None
+
+    @field_validator("search_keywords", mode="before")
+    @classmethod
+    def validate_keywords(cls, value: Any) -> list[str]:
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    @field_validator("inclusion_criteria", "exclusion_criteria", "banned_topics", mode="before")
+    @classmethod
+    def validate_criteria(cls, value: Any) -> list[str]:
+        if not value:
+            return []
+        if isinstance(value, str):
+            return [item.strip() for item in value.split(";") if item.strip()]
+        return [str(item).strip() for item in value if str(item).strip()]
+
+    @field_validator("analysis_passes", mode="before")
+    @classmethod
+    def validate_analysis_passes(cls, value: Any) -> list[AnalysisPassConfig]:
+        if not value:
+            return []
+        if isinstance(value, list):
+            normalized: list[AnalysisPassConfig] = []
+            for item in value:
+                if isinstance(item, AnalysisPassConfig):
+                    normalized.append(item)
+                elif isinstance(item, dict):
+                    normalized.append(AnalysisPassConfig(**item))
+                elif isinstance(item, str):
+                    normalized.append(parse_analysis_pass(item))
+            names = [item.name for item in normalized]
+            if len(names) != len(set(names)):
+                raise ValueError("analysis_passes must use unique pass names")
+            return normalized
+        if isinstance(value, str):
+            return [parse_analysis_pass(value)]
+        return []
+
+    @field_validator("year_range_end")
+    @classmethod
+    def validate_year_range(cls, value: int, info: Any) -> int:
+        year_start = info.data.get("year_range_start", value)
+        if value < year_start:
+            raise ValueError("year_range_end must be greater than or equal to year_range_start")
+        return value
+
+    @field_validator("relevance_threshold")
+    @classmethod
+    def validate_threshold(cls, value: float) -> float:
+        return min(max(float(value), 0.0), 100.0)
+
+    @field_validator("maybe_threshold_margin")
+    @classmethod
+    def validate_margin(cls, value: float) -> float:
+        return min(max(float(value), 0.0), 100.0)
+
+    @field_validator(
+        "pages_to_retrieve",
+        "results_per_page",
+        "max_papers_to_analyze",
+        "max_workers",
+        "request_timeout_seconds",
+        "full_text_max_chars",
+    )
+    @classmethod
+    def validate_positive_ints(cls, value: int) -> int:
+        if int(value) < 1:
+            raise ValueError("Configuration value must be at least 1")
+        return int(value)
+
+    @field_validator("title_similarity_threshold")
+    @classmethod
+    def validate_similarity_threshold(cls, value: float) -> float:
+        return min(max(float(value), 0.0), 1.0)
+
+    @property
+    def search_query(self) -> str:
+        return build_query(self.research_topic, self.search_keywords, self.boolean_operators)
+
+    @property
+    def per_source_limit(self) -> int:
+        return self.pages_to_retrieve * self.results_per_page
+
+    @property
+    def resolved_analysis_passes(self) -> list[AnalysisPassConfig]:
+        if self.run_mode == "collect":
+            return []
+        if self.analysis_passes:
+            return [analysis_pass for analysis_pass in self.analysis_passes if analysis_pass.enabled]
+        provider = "heuristic" if self.llm_provider == "auto" else self.llm_provider
+        return [
+            AnalysisPassConfig(
+                name="default",
+                llm_provider=provider if provider != "auto" else "heuristic",
+                threshold=self.relevance_threshold,
+                decision_mode=self.decision_mode,
+                maybe_threshold_margin=self.maybe_threshold_margin,
+            )
+        ]
+
+    @property
+    def screening_brief(self) -> str:
+        lines = [
+            f"Research topic: {self.research_topic}",
+            f"Search keywords: {', '.join(self.search_keywords)}",
+        ]
+        if self.research_question:
+            lines.append(f"Research question: {self.research_question}")
+        if self.review_objective:
+            lines.append(f"Review objective: {self.review_objective}")
+        if self.inclusion_criteria:
+            lines.append(f"Inclusion criteria: {'; '.join(self.inclusion_criteria)}")
+        if self.exclusion_criteria:
+            lines.append(f"Exclusion criteria: {'; '.join(self.exclusion_criteria)}")
+        if self.banned_topics:
+            lines.append(f"Banned topics: {'; '.join(self.banned_topics)}")
+        return "\n".join(lines)
+
+    @property
+    def screening_context_key(self) -> str:
+        components = [
+            SCREENING_ALGORITHM_VERSION,
+            self.research_topic,
+            self.research_question,
+            self.review_objective,
+            ",".join(sorted(self.search_keywords)),
+            ",".join(sorted(self.inclusion_criteria)),
+            ",".join(sorted(self.exclusion_criteria)),
+            ",".join(sorted(self.banned_topics)),
+            self.decision_mode,
+            str(self.relevance_threshold),
+            str(self.maybe_threshold_margin),
+            str(self.analyze_full_text),
+            self.llm_provider,
+            self.run_mode,
+            json.dumps([analysis_pass.model_dump(mode="json") for analysis_pass in self.resolved_analysis_passes]),
+        ]
+        return make_query_key("|".join(components), [], self.year_range_start, self.year_range_end)
+
+    def finalize(self) -> "ResearchConfig":
+        include_pubmed = self._infer_pubmed() if self.include_pubmed is None else self.include_pubmed
+        query_key = self.query_key or make_query_key(
+            self.research_topic,
+            self.search_keywords,
+            self.year_range_start,
+            self.year_range_end,
+        )
+        updated = self.model_copy(update={"include_pubmed": include_pubmed, "query_key": query_key})
+        updated.ensure_directories()
+        return updated
+
+    def ensure_directories(self) -> None:
+        for path in (self.data_dir, self.papers_dir, self.results_dir):
+            path.mkdir(parents=True, exist_ok=True)
+        ensure_parent_directory(self.database_path)
+
+    def save_snapshot(self) -> Path:
+        target = self.results_dir / "run_config.json"
+        payload = self.model_dump(mode="json")
+        api_settings = payload.get("api_settings", {})
+        for key in ("semantic_scholar_api_key", "springer_api_key", "openai_api_key", "ollama_api_key"):
+            if api_settings.get(key):
+                api_settings[key] = "***REDACTED***"
+        target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return target
+
+    def _infer_pubmed(self) -> bool:
+        haystack = " ".join([self.research_topic, *self.search_keywords]).lower()
+        return any(term in haystack for term in BIOMEDICAL_TERMS)
+
+    @classmethod
+    def from_cli(cls, args: argparse.Namespace) -> "ResearchConfig":
+        file_config = cls._load_config_file(args.config_file) if args.config_file else {}
+
+        def ask(prompt: str, default: str | None = None) -> str:
+            suffix = f" [{default}]" if default is not None else ""
+            value = input(f"{prompt}{suffix}: ").strip()
+            return value or (default or "")
+
+        def ask_int(prompt: str, default: int) -> int:
+            while True:
+                raw = ask(prompt, str(default))
+                try:
+                    return int(raw)
+                except ValueError:
+                    print("Please enter a valid integer.")
+
+        def ask_float(prompt: str, default: float) -> float:
+            while True:
+                raw = ask(prompt, str(default))
+                try:
+                    return float(raw)
+                except ValueError:
+                    print("Please enter a valid number.")
+
+        def ask_bool(prompt: str, default: bool) -> bool:
+            default_label = "yes" if default else "no"
+            while True:
+                raw = ask(prompt, default_label).lower()
+                if raw in {"yes", "y"}:
+                    return True
+                if raw in {"no", "n"}:
+                    return False
+                print("Please answer yes or no.")
+
+        def value_for(name: str, cli_value: Any, default: Any = None) -> Any:
+            if cli_value is not None:
+                return cli_value
+            if name in file_config:
+                return file_config[name]
+            return default
+
+        topic = value_for("research_topic", args.topic)
+        if not topic:
+            topic = ask("Enter research topic")
+
+        research_question = value_for("research_question", getattr(args, "research_question", None), "")
+        if (
+            not args.config_file
+            and getattr(args, "research_question", None) is None
+            and "research_question" not in file_config
+        ):
+            research_question = ask("Optional research question", "")
+
+        review_objective = value_for("review_objective", getattr(args, "review_objective", None), "")
+        if (
+            not args.config_file
+            and getattr(args, "review_objective", None) is None
+            and "review_objective" not in file_config
+        ):
+            review_objective = ask("Optional review objective", "")
+
+        keywords = value_for("search_keywords", args.keywords)
+        if not keywords:
+            keywords = ask("Enter search keywords separated by comma")
+
+        inclusion_criteria = value_for("inclusion_criteria", getattr(args, "inclusion_criteria", None), [])
+        if (
+            not args.config_file
+            and getattr(args, "inclusion_criteria", None) is None
+            and "inclusion_criteria" not in file_config
+        ):
+            raw_inclusion = ask("Optional inclusion criteria separated by semicolon", "")
+            inclusion_criteria = [item.strip() for item in raw_inclusion.split(";") if item.strip()]
+
+        exclusion_criteria = value_for("exclusion_criteria", getattr(args, "exclusion_criteria", None), [])
+        if (
+            not args.config_file
+            and getattr(args, "exclusion_criteria", None) is None
+            and "exclusion_criteria" not in file_config
+        ):
+            raw_exclusion = ask("Optional exclusion criteria separated by semicolon", "")
+            exclusion_criteria = [item.strip() for item in raw_exclusion.split(";") if item.strip()]
+
+        banned_topics = value_for("banned_topics", getattr(args, "banned_topics", None), [])
+        if not args.config_file and getattr(args, "banned_topics", None) is None and "banned_topics" not in file_config:
+            raw_banned = ask("Optional banned topics separated by semicolon", "")
+            banned_topics = [item.strip() for item in raw_banned.split(";") if item.strip()]
+
+        boolean_operators = value_for("boolean_operators", args.boolean, "AND")
+        if args.boolean is None and "boolean_operators" not in file_config:
+            boolean_operators = ask("Optional boolean operator or expression", "AND")
+
+        pages_to_retrieve = value_for("pages_to_retrieve", args.pages)
+        if pages_to_retrieve is None:
+            pages_to_retrieve = ask_int("Number of pages or result batches to retrieve per source", 2)
+
+        results_per_page = value_for("results_per_page", args.results_per_page, 25)
+
+        year_start = value_for("year_range_start", args.year_start)
+        if year_start is None:
+            year_start = ask_int("Year range start", 2018)
+
+        year_end = value_for("year_range_end", args.year_end)
+        if year_end is None:
+            year_end = ask_int("Year range end", 2026)
+
+        max_papers = value_for("max_papers_to_analyze", args.max_papers)
+        if max_papers is None:
+            max_papers = ask_int("Max results to analyze", 50)
+
+        citation_snowballing = (
+            args.citation_snowballing
+            if args.citation_snowballing is not None
+            else file_config.get("citation_snowballing_enabled")
+        )
+        if citation_snowballing is None:
+            citation_snowballing = ask_bool("Enable citation snowballing? (yes/no)", True)
+
+        relevance_threshold = (
+            args.threshold if args.threshold is not None else file_config.get("relevance_threshold")
+        )
+        if relevance_threshold is None:
+            relevance_threshold = ask_float("Relevance score threshold", 70.0)
+
+        download_pdfs = args.download_pdfs if args.download_pdfs is not None else file_config.get("download_pdfs")
+        if download_pdfs is None:
+            download_pdfs = ask_bool("Download PDFs if available? (yes/no)", False)
+
+        analyze_full_text = (
+            args.analyze_full_text
+            if getattr(args, "analyze_full_text", None) is not None
+            else file_config.get("analyze_full_text")
+        )
+        if analyze_full_text is None and not args.config_file:
+            analyze_full_text = ask_bool("Analyze full text from PDFs when available? (yes/no)", False)
+        elif analyze_full_text is None:
+            analyze_full_text = False
+
+        include_pubmed = args.include_pubmed if args.include_pubmed is not None else file_config.get("include_pubmed")
+        if include_pubmed is None:
+            include_pubmed = ask_bool("Include PubMed if the query is biomedical? (yes/no)", True)
+
+        run_mode = value_for("run_mode", getattr(args, "run_mode", None), "analyze")
+        verbosity = value_for("verbosity", getattr(args, "verbosity", None), "normal")
+        analysis_passes = value_for("analysis_passes", getattr(args, "analysis_pass", None), [])
+        file_api_settings = file_config.get("api_settings", {}) or {}
+        api_overrides = {
+            key: value
+            for key, value in {
+                "openai_base_url": getattr(args, "openai_base_url", None),
+                "openai_model": getattr(args, "openai_model", None),
+                "ollama_base_url": getattr(args, "ollama_base_url", None),
+                "ollama_model": getattr(args, "ollama_model", None),
+                "huggingface_model": getattr(args, "huggingface_model", None),
+                "huggingface_task": getattr(args, "huggingface_task", None),
+                "huggingface_device": getattr(args, "huggingface_device", None),
+                "huggingface_dtype": getattr(args, "huggingface_dtype", None),
+                "huggingface_max_new_tokens": getattr(args, "huggingface_max_new_tokens", None),
+                "huggingface_cache_dir": getattr(args, "huggingface_cache_dir", None),
+                "huggingface_trust_remote_code": getattr(args, "huggingface_trust_remote_code", None),
+            }.items()
+            if value is not None
+        }
+        api_settings = ApiSettings(**{**file_api_settings, **api_overrides})
+
+        return cls(
+            research_topic=topic,
+            research_question=research_question,
+            review_objective=review_objective,
+            inclusion_criteria=inclusion_criteria,
+            exclusion_criteria=exclusion_criteria,
+            banned_topics=banned_topics,
+            search_keywords=keywords,
+            boolean_operators=boolean_operators,
+            pages_to_retrieve=pages_to_retrieve,
+            results_per_page=results_per_page,
+            year_range_start=year_start,
+            year_range_end=year_end,
+            max_papers_to_analyze=max_papers,
+            citation_snowballing_enabled=citation_snowballing,
+            relevance_threshold=relevance_threshold,
+            download_pdfs=download_pdfs,
+            analyze_full_text=analyze_full_text,
+            full_text_max_chars=value_for("full_text_max_chars", getattr(args, "full_text_max_chars", None), 12000),
+            llm_provider=value_for("llm_provider", getattr(args, "llm_provider", None), "auto"),
+            decision_mode=value_for("decision_mode", getattr(args, "decision_mode", None), "strict"),
+            maybe_threshold_margin=value_for(
+                "maybe_threshold_margin",
+                getattr(args, "maybe_threshold_margin", None),
+                10.0,
+            ),
+            run_mode=run_mode,
+            verbosity=verbosity,
+            output_csv=value_for("output_csv", getattr(args, "output_csv", None), True),
+            output_json=value_for("output_json", getattr(args, "output_json", None), True),
+            output_markdown=value_for("output_markdown", getattr(args, "output_markdown", None), True),
+            output_sqlite_exports=value_for(
+                "output_sqlite_exports",
+                getattr(args, "output_sqlite_exports", None),
+                True,
+            ),
+            analysis_passes=analysis_passes,
+            openalex_enabled=value_for("openalex_enabled", args.openalex_enabled, True),
+            semantic_scholar_enabled=value_for("semantic_scholar_enabled", args.semantic_scholar_enabled, True),
+            crossref_enabled=value_for("crossref_enabled", args.crossref_enabled, True),
+            springer_enabled=value_for("springer_enabled", getattr(args, "springer_enabled", None), False),
+            arxiv_enabled=value_for("arxiv_enabled", getattr(args, "arxiv_enabled", None), False),
+            include_pubmed=include_pubmed,
+            max_workers=value_for("max_workers", args.max_workers, 4),
+            request_timeout_seconds=value_for("request_timeout_seconds", args.request_timeout_seconds, 30),
+            resume_mode=value_for("resume_mode", args.resume_mode, True),
+            disable_progress_bars=value_for("disable_progress_bars", args.disable_progress_bars, False),
+            title_similarity_threshold=value_for(
+                "title_similarity_threshold",
+                args.title_similarity_threshold,
+                0.92,
+            ),
+            fixture_data_path=value_for("fixture_data_path", args.fixture_data),
+            manual_source_path=value_for("manual_source_path", getattr(args, "manual_source_path", None)),
+            google_scholar_import_path=value_for(
+                "google_scholar_import_path",
+                getattr(args, "google_scholar_import_path", None),
+            ),
+            researchgate_import_path=value_for(
+                "researchgate_import_path",
+                getattr(args, "researchgate_import_path", None),
+            ),
+            data_dir=value_for("data_dir", getattr(args, "data_dir", None), Path("data")),
+            papers_dir=value_for("papers_dir", getattr(args, "papers_dir", None), Path("papers")),
+            results_dir=value_for("results_dir", getattr(args, "results_dir", None), Path("results")),
+            database_path=value_for(
+                "database_path",
+                getattr(args, "database_path", None),
+                Path("data/literature_review.db"),
+            ),
+            api_settings=api_settings,
+        ).finalize()
+
+    @staticmethod
+    def _load_config_file(config_path: str) -> dict[str, Any]:
+        path = Path(config_path)
+        return json.loads(path.read_text(encoding="utf-8"))
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Systematic literature discovery and screening pipeline")
+    parser.add_argument("--config-file", help="Load run settings from a JSON config file")
+    parser.add_argument("--topic", help="Research topic")
+    parser.add_argument("--research-question", help="Explicit research question for AI screening")
+    parser.add_argument("--review-objective", help="Review objective or intended output")
+    parser.add_argument("--inclusion-criteria", help="Semicolon-separated inclusion criteria")
+    parser.add_argument("--exclusion-criteria", help="Semicolon-separated exclusion criteria")
+    parser.add_argument("--banned-topics", help="Semicolon-separated banned topics or themes")
+    parser.add_argument("--keywords", help="Comma-separated search keywords")
+    parser.add_argument("--boolean", help="Boolean operator or expression to join keywords")
+    parser.add_argument("--pages", type=int, help="Number of pages or result batches per source")
+    parser.add_argument("--results-per-page", type=int, dest="results_per_page", help="Results fetched per source page")
+    parser.add_argument("--year-start", type=int, dest="year_start", help="Publication year range start")
+    parser.add_argument("--year-end", type=int, dest="year_end", help="Publication year range end")
+    parser.add_argument("--max-papers", type=int, dest="max_papers", help="Maximum papers to analyze")
+    parser.add_argument(
+        "--citation-snowballing",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable or disable backward and forward citation expansion",
+    )
+    parser.add_argument(
+        "--download-pdfs",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Download PDFs through Unpaywall and direct open-access links",
+    )
+    parser.add_argument(
+        "--analyze-full-text",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Extract and analyze PDF full text when available",
+    )
+    parser.add_argument(
+        "--include-pubmed",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Force PubMed discovery on or off",
+    )
+    parser.add_argument(
+        "--openalex-enabled",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable or disable OpenAlex discovery",
+    )
+    parser.add_argument(
+        "--semantic-scholar-enabled",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable or disable Semantic Scholar discovery",
+    )
+    parser.add_argument(
+        "--crossref-enabled",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable or disable Crossref discovery",
+    )
+    parser.add_argument(
+        "--springer-enabled",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable or disable Springer Nature metadata API discovery",
+    )
+    parser.add_argument(
+        "--arxiv-enabled",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable or disable arXiv API discovery",
+    )
+    parser.add_argument("--threshold", type=float, help="Relevance score threshold from 0 to 100")
+    parser.add_argument(
+        "--run-mode",
+        choices=["collect", "analyze"],
+        help="Collect metadata only or run full analysis",
+    )
+    parser.add_argument(
+        "--verbosity",
+        choices=["quiet", "normal", "verbose", "debug"],
+        help="CLI logging verbosity",
+    )
+    parser.add_argument(
+        "--llm-provider",
+        choices=["auto", "heuristic", "openai_compatible", "ollama", "huggingface_local"],
+        help="LLM provider mode for screening",
+    )
+    parser.add_argument(
+        "--analysis-pass",
+        action="append",
+        help="Sequential analysis pass in the form name:provider:threshold[:decision_mode[:margin]]",
+    )
+    parser.add_argument("--openai-base-url", help="OpenAI-compatible base URL")
+    parser.add_argument("--openai-model", help="OpenAI model name, default gpt-5.4")
+    parser.add_argument("--ollama-base-url", help="Ollama OpenAI-compatible base URL")
+    parser.add_argument("--ollama-model", help="Ollama model tag, for example qwen3:8b or gpt-oss:20b")
+    parser.add_argument(
+        "--huggingface-model",
+        help="Hugging Face model id for local inference, for example Qwen/Qwen3-8B or openai/gpt-oss-20b",
+    )
+    parser.add_argument(
+        "--huggingface-task",
+        help="Transformers pipeline task for local inference, default text-generation",
+    )
+    parser.add_argument(
+        "--huggingface-device",
+        help="Transformers device or device_map setting, default auto",
+    )
+    parser.add_argument(
+        "--huggingface-dtype",
+        help="Transformers torch dtype string, for example auto, float16, bfloat16",
+    )
+    parser.add_argument(
+        "--huggingface-max-new-tokens",
+        type=int,
+        dest="huggingface_max_new_tokens",
+        help="Maximum new tokens for local Hugging Face generation",
+    )
+    parser.add_argument(
+        "--huggingface-cache-dir",
+        help="Optional cache directory for downloaded Hugging Face models",
+    )
+    parser.add_argument(
+        "--huggingface-trust-remote-code",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Allow custom model code when loading Hugging Face models",
+    )
+    parser.add_argument(
+        "--decision-mode",
+        choices=["strict", "triage"],
+        help="Use strict keep-or-exclude or triage with maybe",
+    )
+    parser.add_argument(
+        "--maybe-threshold-margin",
+        type=float,
+        dest="maybe_threshold_margin",
+        help="Score margin below threshold that still counts as maybe in triage mode",
+    )
+    parser.add_argument(
+        "--full-text-max-chars",
+        type=int,
+        dest="full_text_max_chars",
+        help="Maximum number of full-text characters to include in screening",
+    )
+    parser.add_argument("--max-workers", type=int, help="Parallel worker count for discovery and screening")
+    parser.add_argument(
+        "--request-timeout-seconds",
+        type=int,
+        dest="request_timeout_seconds",
+        help="HTTP timeout for API calls",
+    )
+    parser.add_argument(
+        "--resume-mode",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Resume and skip already-screened papers for the same query",
+    )
+    parser.add_argument(
+        "--disable-progress-bars",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Disable tqdm progress bars",
+    )
+    parser.add_argument(
+        "--title-similarity-threshold",
+        type=float,
+        dest="title_similarity_threshold",
+        help="Deduplication similarity threshold between 0 and 1",
+    )
+    parser.add_argument(
+        "--fixture-data",
+        help="Path to a local JSON fixture file for fast offline discovery tests",
+    )
+    parser.add_argument(
+        "--manual-source-path",
+        help="Path to a CSV or JSON export for manual metadata import",
+    )
+    parser.add_argument(
+        "--google-scholar-import-path",
+        help="Path to a CSV or JSON export manually exported from Google Scholar-compatible tools",
+    )
+    parser.add_argument(
+        "--researchgate-import-path",
+        help="Path to a CSV or JSON export manually exported from ResearchGate or a connected repository",
+    )
+    parser.add_argument("--data-dir", help="Directory for pipeline state and SQLite artifacts")
+    parser.add_argument("--papers-dir", help="Directory for downloaded PDFs and extracted text assets")
+    parser.add_argument("--results-dir", help="Directory for CSV, JSON, Markdown, and SQLite result exports")
+    parser.add_argument("--database-path", help="Path to the main SQLite database file")
+    parser.add_argument(
+        "--output-csv",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Write CSV exports",
+    )
+    parser.add_argument(
+        "--output-json",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Write JSON exports",
+    )
+    parser.add_argument(
+        "--output-markdown",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Write Markdown exports",
+    )
+    parser.add_argument(
+        "--output-sqlite-exports",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Write SQLite decision export databases",
+    )
+    return parser
+
+
+def parse_analysis_pass(value: str) -> AnalysisPassConfig:
+    parts = [part.strip() for part in value.split(":")]
+    if len(parts) < 3:
+        raise ValueError("Analysis pass must use name:provider:threshold[:decision_mode[:margin]]")
+    name, provider, threshold = parts[:3]
+    decision_mode = parts[3] if len(parts) >= 4 and parts[3] else "strict"
+    margin = float(parts[4]) if len(parts) >= 5 and parts[4] else 10.0
+    return AnalysisPassConfig(
+        name=name,
+        llm_provider=provider,  # type: ignore[arg-type]
+        threshold=float(threshold),
+        decision_mode=decision_mode,  # type: ignore[arg-type]
+        maybe_threshold_margin=margin,
+    )

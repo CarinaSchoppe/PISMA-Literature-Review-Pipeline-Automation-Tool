@@ -1,0 +1,1 @@
+"""Output report generation utilities."""
