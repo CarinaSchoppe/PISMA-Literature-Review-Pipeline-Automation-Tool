@@ -22,6 +22,12 @@ class ScreeningResult(BaseModel):
     topic_prefilter_threshold: float | None = None
     topic_prefilter_label: str | None = None
     topic_prefilter_keyword_overlap: float | None = None
+    topic_prefilter_research_fit_label: str | None = None
+    topic_prefilter_weighted_score: float | None = None
+    topic_prefilter_min_keyword_matches: int | None = None
+    topic_prefilter_matched_keyword_count: int | None = None
+    topic_prefilter_extracted_topics: list[str] = Field(default_factory=list)
+    topic_prefilter_keyword_details: list[dict[str, Any]] = Field(default_factory=list)
     explanation: str = ""
     extracted_passage: str = ""
     methodology_category: str = "unspecified"

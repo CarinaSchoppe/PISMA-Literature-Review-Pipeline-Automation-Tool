@@ -221,6 +221,10 @@ class ResearchConfig(BaseModel):
     topic_prefilter_filter_low_relevance: bool = False
     topic_prefilter_high_threshold: float = 0.75
     topic_prefilter_review_threshold: float = 0.55
+    topic_prefilter_weighted_keywords: list[str] = Field(default_factory=list)
+    topic_prefilter_min_keyword_matches: int = 1
+    topic_prefilter_match_threshold: float = 55.0
+    topic_prefilter_near_fit_threshold: float = 35.0
     topic_prefilter_text_mode: Literal["title_only", "title_abstract", "title_abstract_full_text"] = "title_abstract"
     topic_prefilter_max_chars: int = 4000
     max_workers: int = 4
@@ -297,7 +301,16 @@ class ResearchConfig(BaseModel):
             raise ValueError("verbosity must be one of normal, verbose, or ultra_verbose")
         return normalized
 
-    @field_validator("inclusion_criteria", "exclusion_criteria", "banned_topics", "excluded_title_terms", mode="before")
+
+
+    @field_validator(
+        "inclusion_criteria",
+        "exclusion_criteria",
+        "banned_topics",
+        "excluded_title_terms",
+        "topic_prefilter_weighted_keywords",
+        mode="before",
+    )
     @classmethod
     def validate_criteria(cls, value: Any) -> list[str]:
         """Normalize criteria-like fields into compact lists of non-empty strings."""
@@ -352,6 +365,13 @@ class ResearchConfig(BaseModel):
 
         return min(max(float(value), 0.0), 100.0)
 
+    @field_validator("topic_prefilter_match_threshold", "topic_prefilter_near_fit_threshold")
+    @classmethod
+    def validate_topic_fit_thresholds(cls, value: float) -> float:
+        """Clamp research-fit thresholds to the supported 0-100 range."""
+
+        return min(max(float(value), 0.0), 100.0)
+
     @field_validator("maybe_threshold_margin")
     @classmethod
     def validate_margin(cls, value: float) -> float:
@@ -374,6 +394,7 @@ class ResearchConfig(BaseModel):
         "google_scholar_page_max",
         "google_scholar_results_per_page",
         "topic_prefilter_max_chars",
+        "topic_prefilter_min_keyword_matches",
     )
     @classmethod
     def validate_positive_ints(cls, value: int) -> int:
@@ -439,6 +460,8 @@ class ResearchConfig(BaseModel):
                 "google_scholar_pages must be between "
                 f"{self.google_scholar_page_min} and {self.google_scholar_page_max}"
             )
+        if self.topic_prefilter_near_fit_threshold > self.topic_prefilter_match_threshold:
+            raise ValueError("topic_prefilter_near_fit_threshold must be less than or equal to topic_prefilter_match_threshold")
         return self
 
     @property
@@ -534,6 +557,13 @@ class ResearchConfig(BaseModel):
                 f"{self.api_settings.topic_prefilter_model} with review threshold {self.topic_prefilter_review_threshold:.2f} "
                 f"and high threshold {self.topic_prefilter_high_threshold:.2f}"
             )
+            lines.append(
+                "Research fit thresholds: "
+                f"strong >= {self.topic_prefilter_match_threshold:.1f}, near >= {self.topic_prefilter_near_fit_threshold:.1f}, "
+                f"minimum keyword matches {self.topic_prefilter_min_keyword_matches}"
+            )
+            if self.topic_prefilter_weighted_keywords:
+                lines.append(f"Weighted topic keywords: {'; '.join(self.topic_prefilter_weighted_keywords)}")
         return "\n".join(lines)
 
     @property
@@ -564,6 +594,10 @@ class ResearchConfig(BaseModel):
             str(self.topic_prefilter_filter_low_relevance),
             str(self.topic_prefilter_high_threshold),
             str(self.topic_prefilter_review_threshold),
+            json.dumps(sorted(self.topic_prefilter_weighted_keywords)),
+            str(self.topic_prefilter_min_keyword_matches),
+            str(self.topic_prefilter_match_threshold),
+            str(self.topic_prefilter_near_fit_threshold),
             self.topic_prefilter_text_mode,
             str(self.topic_prefilter_max_chars),
             self.api_settings.topic_prefilter_model,
@@ -960,6 +994,26 @@ class ResearchConfig(BaseModel):
             topic_prefilter_filter_low_relevance=value_for("topic_prefilter_filter_low_relevance", getattr(args, "topic_prefilter_filter_low_relevance", None), False),
             topic_prefilter_high_threshold=value_for("topic_prefilter_high_threshold", getattr(args, "topic_prefilter_high_threshold", None), 0.75),
             topic_prefilter_review_threshold=value_for("topic_prefilter_review_threshold", getattr(args, "topic_prefilter_review_threshold", None), 0.55),
+            topic_prefilter_weighted_keywords=value_for(
+                "topic_prefilter_weighted_keywords",
+                getattr(args, "topic_prefilter_weighted_keywords", None),
+                [],
+            ),
+            topic_prefilter_min_keyword_matches=value_for(
+                "topic_prefilter_min_keyword_matches",
+                getattr(args, "topic_prefilter_min_keyword_matches", None),
+                1,
+            ),
+            topic_prefilter_match_threshold=value_for(
+                "topic_prefilter_match_threshold",
+                getattr(args, "topic_prefilter_match_threshold", None),
+                55.0,
+            ),
+            topic_prefilter_near_fit_threshold=value_for(
+                "topic_prefilter_near_fit_threshold",
+                getattr(args, "topic_prefilter_near_fit_threshold", None),
+                35.0,
+            ),
             topic_prefilter_text_mode=value_for("topic_prefilter_text_mode", getattr(args, "topic_prefilter_text_mode", None), "title_abstract"),
             topic_prefilter_max_chars=value_for("topic_prefilter_max_chars", getattr(args, "topic_prefilter_max_chars", None), 4000),
             max_workers=value_for("max_workers", args.max_workers, 4),
@@ -1267,6 +1321,29 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=float,
         dest="topic_prefilter_review_threshold",
         help="Semantic similarity threshold for REVIEW in the local MiniLM topic gate",
+    )
+    parser.add_argument(
+        "--topic-prefilter-weighted-keywords",
+        dest="topic_prefilter_weighted_keywords",
+        help="Weighted research-fit keywords using 'keyword|weight' entries separated by commas, semicolons, or newlines",
+    )
+    parser.add_argument(
+        "--topic-prefilter-min-keyword-matches",
+        type=int,
+        dest="topic_prefilter_min_keyword_matches",
+        help="Minimum number of weighted review keywords that should match strongly before a paper counts as a strong fit",
+    )
+    parser.add_argument(
+        "--topic-prefilter-match-threshold",
+        type=float,
+        dest="topic_prefilter_match_threshold",
+        help="Weighted research-fit threshold from 0 to 100 for a strong fit",
+    )
+    parser.add_argument(
+        "--topic-prefilter-near-fit-threshold",
+        type=float,
+        dest="topic_prefilter_near_fit_threshold",
+        help="Weighted research-fit threshold from 0 to 100 for a near-fit warning band",
     )
     parser.add_argument(
         "--topic-prefilter-text-mode",

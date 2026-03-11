@@ -211,6 +211,12 @@ class AIScreener:
                 "topic_prefilter_threshold": topic_match.threshold,
                 "topic_prefilter_label": topic_match.classification,
                 "topic_prefilter_keyword_overlap": topic_match.keyword_overlap_score,
+                "topic_prefilter_research_fit_label": topic_match.research_fit_label,
+                "topic_prefilter_weighted_score": topic_match.weighted_keyword_score,
+                "topic_prefilter_min_keyword_matches": topic_match.min_keyword_matches,
+                "topic_prefilter_matched_keyword_count": topic_match.matched_keyword_count,
+                "topic_prefilter_extracted_topics": list(topic_match.extracted_topics),
+                "topic_prefilter_keyword_details": list(topic_match.keyword_match_details),
                 "explanation": explanation,
             }
         )

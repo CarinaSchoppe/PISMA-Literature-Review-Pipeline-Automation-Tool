@@ -9,10 +9,11 @@ from typing import Any, ClassVar, Literal
 
 from config import ResearchConfig
 from models.paper import PaperMetadata
-from utils.text_processing import keyword_overlap_score, normalize_title
+from utils.text_processing import extract_keyphrases, keyword_overlap_score, normalize_title
 
 LOGGER = logging.getLogger(__name__)
 TopicPrefilterLabel = Literal["HIGH_RELEVANCE", "REVIEW", "LOW_RELEVANCE"]
+ResearchFitLabel = Literal["STRONG_FIT", "NEAR_FIT", "WEAK_FIT"]
 
 
 @dataclass
@@ -29,7 +30,13 @@ class TopicMatchResult:
     classification: TopicPrefilterLabel
     should_exclude: bool
     keyword_overlap_score: float
+    research_fit_label: ResearchFitLabel
+    weighted_keyword_score: float
+    min_keyword_matches: int
+    matched_keyword_count: int
     matched_keywords: list[str] = field(default_factory=list)
+    extracted_topics: list[str] = field(default_factory=list)
+    keyword_match_details: list[dict[str, Any]] = field(default_factory=list)
     source_sections: list[str] = field(default_factory=list)
     explanation: str = ""
 
@@ -80,6 +87,7 @@ class LocalTopicMatcher(BaseTopicMatcher):
         self._model: Any | None = None
         self._device: Any | None = None
         self._review_text = self._build_review_text()
+        self._weighted_review_terms = self._build_weighted_review_terms()
         try:
             LOGGER.info(
                 "Initializing local topic prefilter model '%s'. The first run can take longer while loading local model files.",
@@ -104,6 +112,16 @@ class LocalTopicMatcher(BaseTopicMatcher):
         paper_text, sections = self._build_paper_text(paper)
         if not paper_text:
             return None
+        extracted_topics = self._extract_paper_topics(paper, paper_text)
+        keyword_match_details = self._keyword_match_details(paper_text, extracted_topics)
+        matched_keywords = [
+            detail["keyword"]
+            for detail in keyword_match_details
+            if float(detail["match_score"]) >= 0.55
+        ]
+        matched_keyword_count = len(matched_keywords)
+        weighted_keyword_score = self._weighted_keyword_score(keyword_match_details)
+        research_fit_label = self._classify_research_fit(weighted_keyword_score, matched_keyword_count)
         try:
             LOGGER.debug("Local topic prefilter embedding generation started for '%s'.", paper.title)
             review_embedding, paper_embedding = self._embed_texts([self._review_text, paper_text])
@@ -117,10 +135,11 @@ class LocalTopicMatcher(BaseTopicMatcher):
 
         classification = self._classify_similarity(similarity)
         LOGGER.debug(
-            "Local topic prefilter similarity for '%s': similarity=%.4f classification=%s.",
+            "Local topic prefilter similarity for '%s': similarity=%.4f classification=%s research_fit=%s.",
             paper.title,
             similarity,
             classification,
+            research_fit_label,
         )
         keyword_overlap = keyword_overlap_score(
             paper_text,
@@ -132,20 +151,32 @@ class LocalTopicMatcher(BaseTopicMatcher):
                 *self.config.inclusion_criteria,
             ],
         )
-        matched_keywords = self._matched_keywords(paper_text)
         should_exclude = self.config.topic_prefilter_filter_low_relevance and classification == "LOW_RELEVANCE"
-        explanation = (
-            f"Local semantic topic prefilter using {self.model_name} measured cosine similarity {similarity:.2f} "
-            f"({score:.1f}/100) against the review brief. The configured REVIEW threshold is "
-            f"{self.review_threshold:.2f} and the HIGH_RELEVANCE threshold is {self.high_threshold:.2f}. "
-            f"The paper was classified as {classification}. Review focus used for matching: "
-            f"topic '{self.config.research_topic}', question '{self.config.research_question}', "
-            f"objective '{self.config.review_objective}'. Source text sections used: {', '.join(sections)}."
-        )
+        explanation_parts = [
+            f"Local semantic topic prefilter using {self.model_name} measured cosine similarity {similarity:.2f} ({score:.1f}/100).",
+            f"Semantic label: {classification}.",
+            f"Research fit: {research_fit_label} with weighted keyword score {weighted_keyword_score:.1f}/100.",
+            (
+                f"Matched {matched_keyword_count} strongly aligned weighted keywords out of a required minimum of "
+                f"{self.config.topic_prefilter_min_keyword_matches}."
+            ),
+            f"Review threshold {self.review_threshold:.2f}, HIGH threshold {self.high_threshold:.2f}.",
+            (
+                f"Strong-fit threshold {self.config.topic_prefilter_match_threshold:.1f}, "
+                f"near-fit threshold {self.config.topic_prefilter_near_fit_threshold:.1f}."
+            ),
+            (
+                f"Review focus used for matching: topic '{self.config.research_topic}', "
+                f"question '{self.config.research_question}', objective '{self.config.review_objective}'."
+            ),
+            f"Source text sections used: {', '.join(sections)}.",
+        ]
         if matched_keywords:
-            explanation += f" Matched review keywords: {', '.join(matched_keywords)}."
+            explanation_parts.append(f"Strong keyword matches: {', '.join(matched_keywords)}.")
+        if extracted_topics:
+            explanation_parts.append(f"Extracted paper topics: {', '.join(extracted_topics[:8])}.")
         if should_exclude:
-            explanation += " Automatic filtering is enabled for LOW_RELEVANCE papers, so this paper will be excluded."
+            explanation_parts.append("Automatic filtering is enabled for LOW_RELEVANCE papers, so this paper will be excluded.")
         return TopicMatchResult(
             similarity=round(similarity, 4),
             score=round(score, 2),
@@ -157,9 +188,15 @@ class LocalTopicMatcher(BaseTopicMatcher):
             classification=classification,
             should_exclude=should_exclude,
             keyword_overlap_score=round(keyword_overlap, 4),
+            research_fit_label=research_fit_label,
+            weighted_keyword_score=round(weighted_keyword_score, 2),
+            min_keyword_matches=self.config.topic_prefilter_min_keyword_matches,
+            matched_keyword_count=matched_keyword_count,
             matched_keywords=matched_keywords,
+            extracted_topics=extracted_topics,
+            keyword_match_details=keyword_match_details,
             source_sections=sections,
-            explanation=explanation,
+            explanation=" ".join(explanation_parts),
         )
 
     def _load_cached_model(self, auto_tokenizer: Any, auto_model: Any) -> tuple[Any, Any]:
@@ -194,6 +231,7 @@ class LocalTopicMatcher(BaseTopicMatcher):
             f"Review objective: {self.config.review_objective}".strip(),
             f"Search keywords: {'; '.join(self.config.search_keywords)}".strip(),
             f"Inclusion criteria: {'; '.join(self.config.inclusion_criteria)}".strip(),
+            f"Weighted research keywords: {'; '.join(self.config.topic_prefilter_weighted_keywords)}".strip(),
         ]
         weighted_focus = [
             self.config.research_topic,
@@ -201,6 +239,56 @@ class LocalTopicMatcher(BaseTopicMatcher):
             self.config.review_objective,
         ]
         return " ".join(part.strip() for part in [*parts, *weighted_focus] if part and part.strip())
+
+    def _build_weighted_review_terms(self) -> list[tuple[str, float]]:
+        """Build weighted review terms from explicit entries or sensible defaults."""
+
+        if self.config.topic_prefilter_weighted_keywords:
+            weighted = [
+                self._parse_weighted_keyword(item)
+                for item in self.config.topic_prefilter_weighted_keywords
+            ]
+            return [(term, weight) for term, weight in weighted if term]
+        weighted_terms: list[tuple[str, float]] = []
+        weighted_terms.extend(self._dedupe_weighted_terms([self.config.research_topic], 1.6))
+        weighted_terms.extend(self._dedupe_weighted_terms([self.config.research_question], 1.35, weighted_terms))
+        weighted_terms.extend(self._dedupe_weighted_terms([self.config.review_objective], 1.2, weighted_terms))
+        weighted_terms.extend(self._dedupe_weighted_terms(self.config.search_keywords, 1.0, weighted_terms))
+        weighted_terms.extend(self._dedupe_weighted_terms(self.config.inclusion_criteria, 0.9, weighted_terms))
+        return weighted_terms
+
+    def _dedupe_weighted_terms(
+        self,
+        terms: list[str],
+        weight: float,
+        existing: list[tuple[str, float]] | None = None,
+    ) -> list[tuple[str, float]]:
+        """Add unique normalized terms with a shared weight."""
+
+        existing_terms = {normalize_title(term) for term, _value in existing or []}
+        deduped: list[tuple[str, float]] = []
+        for term in terms:
+            normalized = normalize_title(term)
+            if not normalized or normalized in existing_terms:
+                continue
+            deduped.append((term.strip(), weight))
+            existing_terms.add(normalized)
+        return deduped
+
+    def _parse_weighted_keyword(self, raw_value: str) -> tuple[str, float]:
+        """Parse one `keyword|weight` definition from config or GUI state."""
+
+        candidate = str(raw_value or "").strip()
+        if not candidate:
+            return "", 0.0
+        if "|" not in candidate:
+            return candidate, 1.0
+        keyword, raw_weight = candidate.split("|", 1)
+        try:
+            weight = max(float(raw_weight.strip()), 0.0)
+        except ValueError:
+            weight = 1.0
+        return keyword.strip(), weight
 
     def _build_paper_text(self, paper: PaperMetadata) -> tuple[str, list[str]]:
         """Select the paper text window used for semantic topic comparison."""
@@ -238,31 +326,92 @@ class LocalTopicMatcher(BaseTopicMatcher):
                 return [str(item).strip() for item in raw_value if str(item).strip()]
         return []
 
-    def _matched_keywords(self, paper_text: str) -> list[str]:
-        """Return review keywords that are visibly present in the paper text window."""
+    def _extract_paper_topics(self, paper: PaperMetadata, paper_text: str) -> list[str]:
+        """Extract lightweight topics and merge them with any explicit metadata keywords."""
 
-        normalized = normalize_title(paper_text)
-        normalized_tokens = set(normalized.split())
-        matched: list[str] = []
-        for keyword in [
-            self.config.research_topic,
-            self.config.research_question,
-            self.config.review_objective,
-            *self.config.search_keywords,
-            *self.config.inclusion_criteria,
-        ]:
+        explicit_keywords = self._paper_keywords(paper)
+        combined_candidates = [*explicit_keywords, *extract_keyphrases(paper_text, limit=12)]
+        seen: set[str] = set()
+        topics: list[str] = []
+        for candidate in combined_candidates:
+            normalized = normalize_title(candidate)
+            if not normalized or normalized in seen:
+                continue
+            topics.append(candidate.strip())
+            seen.add(normalized)
+            if len(topics) >= 12:
+                break
+        return topics
+
+    def _keyword_match_details(self, paper_text: str, extracted_topics: list[str]) -> list[dict[str, Any]]:
+        """Return per-keyword research-fit evidence for one paper."""
+
+        normalized_text = normalize_title(paper_text)
+        normalized_paper_tokens = set(normalized_text.split())
+        normalized_topics = [(topic, normalize_title(topic)) for topic in extracted_topics]
+        details: list[dict[str, Any]] = []
+        for keyword, weight in self._weighted_review_terms:
             normalized_keyword = normalize_title(keyword)
-            if not normalized_keyword or keyword in matched:
-                continue
-            if normalized_keyword in normalized:
-                matched.append(keyword)
-                continue
             keyword_tokens = [token for token in normalized_keyword.split() if len(token) >= 4]
-            if len(keyword_tokens) >= 2:
-                overlap = sum(1 for token in keyword_tokens if token in normalized_tokens)
-                if overlap / len(keyword_tokens) >= 0.6:
-                    matched.append(keyword)
-        return matched
+            if not normalized_keyword or not keyword_tokens:
+                continue
+            best_score = 0.0
+            best_topic = ""
+            if normalized_keyword in normalized_text:
+                best_score = 1.0
+                best_topic = keyword
+            else:
+                for topic, normalized_topic in normalized_topics:
+                    topic_tokens = [token for token in normalized_topic.split() if len(token) >= 4]
+                    if not topic_tokens:
+                        continue
+                    overlap = len(set(keyword_tokens) & set(topic_tokens))
+                    candidate_score = overlap / max(len(set(keyword_tokens)), 1)
+                    if candidate_score > best_score:
+                        best_score = candidate_score
+                        best_topic = topic
+                if best_score < 1.0:
+                    overlap = len(set(keyword_tokens) & normalized_paper_tokens)
+                    token_score = overlap / max(len(set(keyword_tokens)), 1)
+                    if token_score > best_score:
+                        best_score = token_score
+                        best_topic = "paper text"
+            status = "matched" if best_score >= 0.55 else "near" if best_score >= 0.35 else "missed"
+            details.append(
+                {
+                    "keyword": keyword,
+                    "weight": round(weight, 2),
+                    "match_score": round(best_score, 4),
+                    "match_percent": round(best_score * 100.0, 2),
+                    "status": status,
+                    "best_topic": best_topic,
+                }
+            )
+        return sorted(details, key=lambda detail: (detail["match_score"], detail["weight"]), reverse=True)
+
+    def _weighted_keyword_score(self, keyword_match_details: list[dict[str, Any]]) -> float:
+        """Collapse per-keyword evidence into one weighted 0-100 score."""
+
+        if not keyword_match_details:
+            return 0.0
+        total_weight = sum(float(detail["weight"]) for detail in keyword_match_details) or 1.0
+        matched_weight = sum(float(detail["weight"]) * float(detail["match_score"]) for detail in keyword_match_details)
+        return (matched_weight / total_weight) * 100.0
+
+    def _classify_research_fit(self, weighted_keyword_score: float, matched_keyword_count: int) -> ResearchFitLabel:
+        """Map weighted keyword evidence to a research-fit label."""
+
+        if (
+            weighted_keyword_score >= self.config.topic_prefilter_match_threshold
+            and matched_keyword_count >= self.config.topic_prefilter_min_keyword_matches
+        ):
+            return "STRONG_FIT"
+        if (
+            weighted_keyword_score >= self.config.topic_prefilter_near_fit_threshold
+            or matched_keyword_count >= max(self.config.topic_prefilter_min_keyword_matches - 1, 1)
+        ):
+            return "NEAR_FIT"
+        return "WEAK_FIT"
 
     def _classify_similarity(self, similarity: float) -> TopicPrefilterLabel:
         """Map cosine similarity to the configured topic-prefilter classification label."""
