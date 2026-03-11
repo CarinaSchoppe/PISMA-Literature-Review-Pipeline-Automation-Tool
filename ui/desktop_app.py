@@ -6817,24 +6817,69 @@ class DesktopWorkbench:
             f"Retain reason: {row.get('retain_reason', '') or '(not available)'}",
             f"Exclusion reason: {row.get('exclusion_reason', '') or '(not available)'}",
         ]
+        extracted_topics, keyword_details = self._topic_detail_payload(row)
+        research_fit_label = str(row.get("topic_prefilter_research_fit_label", "") or "").strip()
+        weighted_score = str(row.get("topic_prefilter_weighted_score", "") or "").strip()
+        matched_count = str(row.get("topic_prefilter_matched_keyword_count", "") or "").strip()
+        min_matches = str(row.get("topic_prefilter_min_keyword_matches", "") or "").strip()
+        semantic_label = str(row.get("topic_prefilter_label", "") or "").strip()
+        semantic_similarity = str(row.get("topic_prefilter_similarity", "") or "").strip()
+        if research_fit_label or extracted_topics or keyword_details:
+            lines.extend(
+                [
+                    "",
+                    "Research fit snapshot",
+                    f"- Research fit label: {research_fit_label or '(not available)'}",
+                    f"- Weighted keyword score: {weighted_score or '(not available)'}",
+                    f"- Matched keywords: {matched_count or '0'} / {min_matches or '0'} minimum",
+                    f"- Semantic topic label: {semantic_label or '(not available)'}",
+                    f"- Semantic similarity: {semantic_similarity or '(not available)'}",
+                ]
+            )
+            if extracted_topics:
+                lines.append(f"- Extracted topics: {', '.join(extracted_topics[:8])}")
+            if keyword_details:
+                top_matches = ", ".join(
+                    f"{detail.get('keyword', '')} {float(detail.get('match_percent', 0.0)):.0f}%"
+                    for detail in keyword_details[:5]
+                )
+                lines.append(f"- Top keyword matches: {top_matches}")
         paper = self._paper_from_row(row)
         if paper is not None:
             try:
                 config = form_values_to_config(self._collect_form_values())
                 scorer = RelevanceScorer(config)
-                fit_score = scorer.deep_score(paper)
+                topic_match = scorer.evaluate_topic_match(paper)
+                if topic_match is not None and not research_fit_label:
+                    lines.extend(
+                        [
+                            "",
+                            "Research fit snapshot",
+                            f"- Research fit label: {topic_match.research_fit_label}",
+                            f"- Weighted keyword score: {topic_match.weighted_keyword_score:.2f}",
+                            (
+                                f"- Matched keywords: {topic_match.matched_keyword_count} / "
+                                f"{topic_match.min_keyword_matches} minimum"
+                            ),
+                            f"- Semantic topic label: {topic_match.classification}",
+                            f"- Semantic similarity: {topic_match.similarity:.2f}",
+                        ]
+                    )
+                    if topic_match.extracted_topics:
+                        lines.append(f"- Extracted topics: {', '.join(topic_match.extracted_topics[:8])}")
+                    if topic_match.keyword_match_details:
+                        top_matches = ", ".join(
+                            f"{detail.get('keyword', '')} {float(detail.get('match_percent', 0.0)):.0f}%"
+                            for detail in topic_match.keyword_match_details[:5]
+                        )
+                        lines.append(f"- Top keyword matches: {top_matches}")
                 lines.extend(
                     [
-                        "",
-                        "Research fit snapshot",
-                        f"- Topic match score: {fit_score:.2f}",
                         f"- Research topic: {config.research_topic or '(not set)'}",
                         f"- Research question: {config.research_question or '(not set)'}",
                         f"- Review objective: {config.review_objective or '(not set)'}",
                     ]
                 )
-                topic_match = scorer.evaluate_topic_match(paper)
-                lines.append(f"- Topic keyword support: {topic_match:.2f}")
             except Exception as exc:  # pragma: no cover - defensive preview fallback
                 lines.extend(["", f"Research fit preview could not be computed: {exc}"])
         content_candidates = [
