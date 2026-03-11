@@ -52,8 +52,13 @@ class DesktopWorkbenchWorkflowTests(unittest.TestCase):
                 pass
 
     def test_browse_for_field_supports_directory_file_and_database_targets(self) -> None:
+        def fake_save_dialog(*_: object, **kwargs: object) -> str:
+            if kwargs.get("defaultextension") == ".log":
+                return "results/pipeline.log"
+            return "data/custom.db"
+
         with patch("ui.desktop_app.filedialog.askdirectory", return_value="results/custom"), patch(
-                "ui.desktop_app.filedialog.asksaveasfilename", return_value="data/custom.db"
+            "ui.desktop_app.filedialog.asksaveasfilename", side_effect=fake_save_dialog
         ), patch("ui.desktop_app.filedialog.askopenfilename", return_value="imports/manual.csv"):
             self.workbench._browse_for_field("results_dir", self.workbench.scalar_vars["results_dir"])
             self.workbench._browse_for_field("database_path", self.workbench.scalar_vars["database_path"])

@@ -243,6 +243,7 @@ class HTTPUtilsTests(unittest.TestCase):
             self.assertIsNone(cache.load("bad", expected_kind="json"))
 
     def test_cached_payload_is_ignored_after_ttl_expiry(self) -> None:
+        http.configure_http_logging(enabled=False, log_payloads=False)
         http.configure_http_runtime(
             cache_enabled=True,
             cache_dir=self.temp_dir.name,
