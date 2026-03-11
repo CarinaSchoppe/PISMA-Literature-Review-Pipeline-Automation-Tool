@@ -196,7 +196,7 @@ class ResearchConfig(BaseModel):
     decision_mode: Literal["strict", "triage"] = "strict"
     maybe_threshold_margin: float = 10.0
     run_mode: Literal["collect", "analyze"] = "analyze"
-    verbosity: Literal["normal", "verbose", "ultra_verbose"] = "normal"
+    verbosity: Literal["normal", "verbose", "ultra_verbose"] = "ultra_verbose"
     output_csv: bool = True
     output_json: bool = True
     output_markdown: bool = True

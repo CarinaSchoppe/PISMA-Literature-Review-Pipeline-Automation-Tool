@@ -213,12 +213,14 @@ class PipelineController:
             else:
                 screening_stats = self._screen_papers()
                 if self.config.download_pdfs and self.config.pdf_download_mode == "relevant_only":
+                    LOGGER.info("Downloading relevant PDFs for screened records.")
                     relevant_pdf_updates = self._download_relevant_pdfs(
                         self._apply_discovery_limits(
                             self.database.get_papers_for_query(self.config.query_key or "")
                         )
                     )
                     if relevant_pdf_updates:
+
                         self.database.upsert_papers(relevant_pdf_updates, self.config.query_key or "")
             final_papers = self._apply_discovery_limits(
                 self._normalize_papers_for_current_context(
@@ -573,6 +575,9 @@ class PipelineController:
         full_text_screened_count = len(
             [paper for paper in prepared_candidates if paper.raw_payload.get("full_text_excerpt")]
         )
+
+        LOGGER.info("payloading %s papers for screening.", len(prepared_candidates))
+
         results: list[tuple[int, ScreeningResult, dict[str, Any]]] = []
         cached_results: list[tuple[int, ScreeningResult, dict[str, Any]]] = []
         uncached_candidates: list[PaperMetadata] = []
@@ -583,8 +588,10 @@ class PipelineController:
             cached = self.database.get_cached_screening_entry(cache_key, self.config.screening_context_key)
             if cached is None:
                 uncached_candidates.append(paper)
+                LOGGER.info("Paper is not cached, will be screened.")
             else:
                 cached_results.append((paper.database_id, cached[0], cached[1]))
+                LOGGER.info("Paper is cached, will not be screened.")
 
         if cached_results:
             LOGGER.info("Reused %s cached screening results.", len(cached_results))
@@ -598,6 +605,7 @@ class PipelineController:
                     for paper in uncached_candidates
                     if paper.database_id is not None
                 }
+                LOGGER.info("Screening %s uncached papers.", len(future_map))
                 for future in tqdm(
                         as_completed(future_map),
                         total=len(future_map),
@@ -606,6 +614,7 @@ class PipelineController:
                         disable=self.config.disable_progress_bars,
                 ):
                     self._check_stop()
+
                     paper = future_map[future]
                     try:
                         result, screening_details = future.result()
@@ -616,6 +625,7 @@ class PipelineController:
                             result=result,
                             screening_details=screening_details,
                         )
+                        LOGGER.info("Screening result for %s cached.", paper.title)
                         results.append((paper.database_id or 0, result, screening_details))
                     except Exception as exc:  # noqa: BLE001
                         LOGGER.exception("Screening failed for %s: %s", paper.title, exc)
@@ -623,8 +633,14 @@ class PipelineController:
                 if executor in self._active_executors:
                     self._active_executors.remove(executor)
 
+                    LOGGER.info("Removed executor %s from active executors.", executor)
+
+                LOGGER.info("Executor %s has completed screening.", executor)
+
         for database_id, result, screening_details in [*cached_results, *results]:
             self.database.update_screening_result(database_id, result, screening_details=screening_details)
+
+        LOGGER.info("Screening completed for %s papers.", len(cached_results) + len(results))
         return {
             "screened_count": len(cached_results) + len(results),
             "full_text_screened_count": full_text_screened_count,
