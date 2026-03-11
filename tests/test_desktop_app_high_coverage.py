@@ -1028,6 +1028,38 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
             workbench_cls.return_value.run.return_value = 7
             self.assertEqual(launch_desktop_app(SimpleNamespace(config_file=None)), 7)
 
+    def test_document_preview_and_log_style_guard_branches(self) -> None:
+        self.assertEqual(
+            self.workbench._resolve_log_style("2026-03-12 10:00:00 | INFO | pipeline.pipeline_controller | Pipeline finished in 0.02 seconds.")[0],
+            "log_success",
+        )
+        self.assertEqual(
+            self.workbench._resolve_log_style("2026-03-12 10:00:00 | WARNING | pipeline.pipeline_controller | Something needs attention")[0],
+            "log_warning",
+        )
+        self.assertEqual(
+            self.workbench._resolve_log_style("2026-03-12 10:00:00 | ERROR | pipeline.pipeline_controller | Something failed")[0],
+            "log_error",
+        )
+
+        self.workbench.document_status_var.set("No paper selected yet.")
+        self.workbench._open_document_external()
+
+        preview_summary, preview_content = self.workbench._build_document_preview(
+            {
+                "title": "Fallback preview",
+                "abstract": "Abstract preview",
+                "source": "fixture",
+                "inclusion_decision": "maybe",
+                "relevance_score": 50,
+            },
+            source_label="All Papers",
+            document_path=None,
+        )
+        self.assertIn("Fallback preview", preview_summary)
+        self.assertIn("Abstract preview", preview_content)
+        self.assertIsNone(self.workbench._candidate_document_path({"title": "No file"}))
+
 
 if __name__ == "__main__":  # pragma: no cover - direct module execution helper
     unittest.main()

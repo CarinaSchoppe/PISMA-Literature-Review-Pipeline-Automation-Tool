@@ -218,6 +218,8 @@ These settings are persisted with saved GUI profiles so the desktop workbench op
 Practical GUI behavior:
 
 - these fields control the startup state of the workbench
+- compact mode is the safer default for smaller windows because it collapses large overview sections and preserves more vertical room for the scrollable editor panes
+- the embedded `Document Viewer` uses the current runtime configuration to compute a lightweight research-fit snapshot from the same topic, question, and objective fields
 - the workbench also applies responsive compact-window behavior automatically when the window is too small for the larger overview panels
 - the large workspace overview and the large settings overview can both be collapsed manually at runtime
 

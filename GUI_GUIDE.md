@@ -38,6 +38,7 @@ Main tabs:
 - `Charts`
 - `Run History`
 - `Screening Audit`
+- `Document Viewer`
 - `Handbook`
 
 ## Settings Shell
@@ -87,8 +88,15 @@ Scrollable areas include:
 - chart preview
 - run history
 - screening audit
+- document viewer summary and preview panes
 
 If a page grows beyond the visible window size, vertical scrolling keeps the content reachable. Wide tables and wide content areas also expose horizontal scrolling where needed.
+
+Mouse-wheel behavior:
+
+- the workbench routes the mouse wheel to the active inner widget under the cursor
+- this matters on smaller windows because the correct table, text pane, or canvas keeps scrolling instead of the outer shell swallowing the event
+- `Shift + MouseWheel` scrolls horizontally for wide tables and previews when a horizontal scrollbar exists
 
 Non-fullscreen usability:
 
@@ -248,6 +256,38 @@ Toolbar actions:
 
 - requests a controlled stop
 - stops at safe boundaries rather than killing the process instantly
+
+## Document Viewer
+
+The `Document Viewer` tab is built for fast result inspection.
+
+Open it by:
+
+- double-clicking a paper row in `All Papers`
+- double-clicking a row in `Included`
+- double-clicking a row in `Excluded`
+- double-clicking a row in `Screening Audit`
+
+What it shows:
+
+- core paper metadata
+- screening decision and score
+- retain or exclusion reasons
+- local PDF text excerpt when a downloaded PDF exists
+- fallback abstract or extracted passage when no local PDF is present
+- a compact research-fit snapshot using the current topic, research question, and review objective
+
+If a local file exists, `Open External File` opens it with the operating-system default viewer.
+
+## Run Log Styling
+
+The run log uses semantic color and badge styling:
+
+- success/completed lines: green
+- warnings: orange
+- errors: red
+- trace lines: muted
+- neutral info: standard foreground color
 
 ## Window-Size Tips
 

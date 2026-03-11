@@ -208,6 +208,33 @@ class TopicPrefilterTests(unittest.TestCase):
         self.assertIn("AI governance", result.matched_keywords)
         self.assertGreaterEqual(result.keyword_overlap_score, 0.1)
         self.assertIn("cosine similarity 0.82", result.explanation)
+        self.assertIn("topic 'AI governance for healthcare systems'", result.explanation)
+        self.assertIn("question 'How relevant are papers to AI governance in health?'", result.explanation)
+        self.assertIn("objective 'Retain papers focused on AI governance, evaluation, and deployment.'", result.explanation)
+
+    def test_matched_keywords_can_use_topic_question_and_objective_text(self) -> None:
+        config = ResearchConfig(
+            research_topic="governance evaluation workflows",
+            research_question="How should governance workflows be evaluated?",
+            review_objective="Retain governance workflow evaluation studies.",
+            search_keywords=[],
+            inclusion_criteria=[],
+            include_pubmed=False,
+        ).finalize()
+        paper = self._paper(
+            title="Governance workflow evaluation",
+            abstract="A study on governance workflow evaluation in practice.",
+            raw_payload={"keywords": []},
+        )
+
+        with patch("analysis.topic_prefilter.load_embedding_runtime", return_value=(_FakeTorch, _FakeTokenizerLoader, _FakeModelLoader)), \
+             patch.object(LocalTopicMatcher, "_embed_texts", return_value=[_FakeVector(1.0), _FakeVector(0.70)]):
+            matcher = LocalTopicMatcher(config)
+            result = matcher.score_paper(paper)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertTrue(any("governance" in keyword.lower() for keyword in result.matched_keywords))
 
     def test_local_topic_matcher_can_auto_filter_low_relevance(self) -> None:
         config = self._config(topic_prefilter_enabled=True, topic_prefilter_filter_low_relevance=True)

@@ -19,7 +19,10 @@ from typing import Any, Callable
 
 import pandas as pd
 
+from acquisition.full_text_extractor import FullTextExtractor
+from analysis.relevance_scoring import RelevanceScorer
 from config import parse_analysis_pass
+from models.paper import PaperMetadata
 from pipeline.pipeline_controller import PipelineController
 from ui.view_model import (
     BOOLEAN_FIELD_DEFAULTS,
@@ -150,6 +153,34 @@ class DesktopWorkbench:
         "inverse_text": "#f8fbff",
         "selection": "#eef2ff",
     }
+    LOG_LEVELS = {
+        "TRACE": "log_trace",
+        "DEBUG": "log_trace",
+        "INFO": "log_info",
+        "WARNING": "log_warning",
+        "ERROR": "log_error",
+        "CRITICAL": "log_error",
+    }
+    LOG_BADGES = {
+        "log_trace": "[TRC]",
+        "log_info": "[INFO]",
+        "log_success": "[OK]",
+        "log_warning": "[WARN]",
+        "log_error": "[ERR]",
+    }
+    LOG_SUCCESS_KEYWORDS = (
+        " completed",
+        " finished",
+        " generated ",
+        " cached.",
+        " ready on device",
+        " returned ",
+        " stored ",
+        " loaded ",
+        " produced ",
+        " wrote ",
+        " is ready",
+    )
 
     SETTINGS_PAGES = [
         ("Review Setup", ["Review Brief"]),
@@ -1294,7 +1325,9 @@ class DesktopWorkbench:
         self.settings_section_summary_labels: dict[str, ttk.Label] = {}
         self.run_history_entries: list[dict[str, Any]] = []
         self.artifact_details: dict[str, dict[str, str]] = {}
+        self.table_rows: dict[str, dict[str, dict[str, Any]]] = {}
         self.screening_audit_rows: dict[str, dict[str, Any]] = {}
+        self.document_status_var = tk.StringVar(value="No paper selected yet.")
         self.active_settings_page_var = tk.StringVar(value="Review Setup")
         self.active_settings_page_description_var = tk.StringVar(
             value=self.SETTINGS_PAGE_DESCRIPTIONS.get("Review Setup", "")
@@ -1305,7 +1338,7 @@ class DesktopWorkbench:
         self.status_var = tk.StringVar(value=self.base_status_message)
         self.hover_help_enabled = tk.BooleanVar(value=True)
         self.show_advanced_settings = tk.BooleanVar(value=bool(self.form_values.get("ui_show_advanced_settings", False)))
-        self.compact_window_mode = tk.BooleanVar(value=False)
+        self.compact_window_mode = tk.BooleanVar(value=True)
         self.is_closing = False
         self.hover_tooltip = HoverTooltip(self.root)
         self._hover_message_active = False
@@ -1313,6 +1346,11 @@ class DesktopWorkbench:
         self.all_search_var = tk.StringVar(value="")
         self.handbook_search_var = tk.StringVar(value="")
         self.handbook_entries = self._build_handbook_entries()
+        self.document_summary_text: tk.Text | None = None
+        self.document_content_text: tk.Text | None = None
+        self.document_path_label: ttk.Label | None = None
+        self.document_open_button: ttk.Button | None = None
+        self.poll_after_id: str | None = None
 
         self._build_layout()
         self._apply_form_values(self.form_values)
@@ -1327,7 +1365,7 @@ class DesktopWorkbench:
         self.root.bind_all("<Button-4>", self._on_settings_mousewheel, add="+")
         self.root.bind_all("<Button-5>", self._on_settings_mousewheel, add="+")
         self.root.bind("<Configure>", self._handle_root_resize, add="+")
-        self.root.after(100, self._poll_messages)
+        self.poll_after_id = self.root.after(100, self._poll_messages)
         self.root.after_idle(self._apply_responsive_layout)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -1803,6 +1841,32 @@ class DesktopWorkbench:
             self.visual_summary_cards[key] = card
         return strip
 
+    def _configure_log_widget_tags(self) -> None:
+        """Apply semantic colors to the live log widget so severity is easier to scan."""
+
+        if self.log_widget is None:
+            return
+        self.log_widget.tag_configure("log_trace", foreground="#7a8699")
+        self.log_widget.tag_configure("log_info", foreground=self.PALETTE["text"])
+        self.log_widget.tag_configure("log_success", foreground=self.PALETTE["success"])
+        self.log_widget.tag_configure("log_warning", foreground=self.PALETTE["warning"])
+        self.log_widget.tag_configure("log_error", foreground=self.PALETTE["danger"])
+        self.log_widget.tag_configure("log_badge", font=("Consolas", 10, "bold"))
+
+    def _resolve_log_style(self, message: str) -> tuple[str, str]:
+        """Map one log line to a semantic tag and short badge."""
+
+        upper = message.upper()
+        for level_name, tag_name in self.LOG_LEVELS.items():
+            marker = f"| {level_name} |"
+            if marker in upper:
+                if tag_name == "log_info":
+                    lowered = message.lower()
+                    if any(keyword in lowered for keyword in self.LOG_SUCCESS_KEYWORDS):
+                        return "log_success", self.LOG_BADGES["log_success"]
+                return tag_name, self.LOG_BADGES[tag_name]
+        return "log_info", self.LOG_BADGES["log_info"]
+
     def run(self) -> int:
         """Enter the Tk event loop until the user closes the application window."""
 
@@ -2244,6 +2308,7 @@ class DesktopWorkbench:
         self.all_tab = ttk.Frame(notebook)
         self.included_tab = ttk.Frame(notebook)
         self.excluded_tab = ttk.Frame(notebook)
+        self.document_tab = ttk.Frame(notebook)
         self.outputs_tab = ttk.Frame(notebook)
         self.charts_tab = ttk.Frame(notebook)
         self.run_history_tab = ttk.Frame(notebook)
@@ -2254,6 +2319,7 @@ class DesktopWorkbench:
         notebook.add(self.all_tab, text="All Papers")
         notebook.add(self.included_tab, text="Included")
         notebook.add(self.excluded_tab, text="Excluded")
+        notebook.add(self.document_tab, text="Document Viewer")
         notebook.add(self.outputs_tab, text="Outputs")
         notebook.add(self.charts_tab, text="Charts")
         notebook.add(self.run_history_tab, text="Run History")
@@ -2265,6 +2331,7 @@ class DesktopWorkbench:
         self._build_table_tab(self.all_tab, "all_papers", include_filters=True)
         self._build_table_tab(self.included_tab, "included_papers")
         self._build_table_tab(self.excluded_tab, "excluded_papers")
+        self._build_document_tab()
         self._build_outputs_tab()
         self._build_charts_tab()
         self._build_run_history_tab()
@@ -3854,7 +3921,8 @@ class DesktopWorkbench:
             else:
                 status = "Attention"
                 reason = note
-            self.provider_health_tree.insert("", tk.END, values=(provider, status, reason))
+            tag = "ready" if enabled and credential_ready else "attention"
+            self.provider_health_tree.insert("", tk.END, values=(provider, status, reason), tags=(tag,))
 
     def _write_summary_widget(self, widget: tk.Text | None, text: str) -> None:
         """Render summary text into a read-only scrolled text widget."""
@@ -3925,9 +3993,27 @@ class DesktopWorkbench:
             "vertical": vertical_scrollbar,
             "horizontal": horizontal_scrollbar,
         }
+        self._configure_status_tree_tags(tree_widget)
         self._bind_scroll_target(shell, target=tree_widget)
         self._bind_scroll_target(tree_widget)
         return shell, tree_widget
+
+    def _configure_status_tree_tags(self, tree_widget: ttk.Treeview) -> None:
+        """Define reusable status and decision color tags for result-oriented tables."""
+
+        tag_styles = {
+            "include": {"background": "#eafaf1", "foreground": "#0f8a4a"},
+            "maybe": {"background": "#fff5e8", "foreground": "#b56a00"},
+            "exclude": {"background": "#fff0ef", "foreground": "#c24136"},
+            "completed": {"background": "#eafaf1", "foreground": "#0f8a4a"},
+            "stopped": {"background": "#fff5e8", "foreground": "#b56a00"},
+            "failed": {"background": "#fff0ef", "foreground": "#c24136"},
+            "warning": {"background": "#fff5e8", "foreground": "#b56a00"},
+            "ready": {"background": "#eafaf1", "foreground": "#0f8a4a"},
+            "attention": {"background": "#fff5e8", "foreground": "#b56a00"},
+        }
+        for tag_name, style in tag_styles.items():
+            tree_widget.tag_configure(tag_name, **style)
 
     def _create_scrolled_canvas_widget(
         self,
@@ -4621,6 +4707,7 @@ class DesktopWorkbench:
             horizontal=True,
         )
         shell.grid(row=2, column=0, sticky="nsew")
+        self._configure_log_widget_tags()
 
     def _build_table_tab(self, parent: ttk.Frame, key: str, *, include_filters: bool = False) -> None:
         """Create a generic results table tab, optionally with filters for the full paper list."""
@@ -4669,8 +4756,79 @@ class DesktopWorkbench:
 
         tree_shell, tree = self._create_scrolled_tree_widget(container, key=key, show="headings")
         tree_shell.grid(row=3 if include_filters else 2, column=0, sticky="nsew")
+        tree.bind("<Double-1>", lambda _event, table_key=key: self._open_document_from_table(table_key))
         self.treeviews[key] = tree
         self.table_frames[key] = container
+
+    def _build_document_tab(self) -> None:
+        """Create an embedded document viewer for selected paper rows."""
+
+        container = ttk.Frame(self.document_tab, padding=8, style="Surface.TFrame")
+        container.pack(fill="both", expand=True)
+        container.columnconfigure(0, weight=1)
+        container.columnconfigure(1, weight=2)
+        container.rowconfigure(2, weight=1)
+
+        ttk.Label(container, text="Document viewer", style="PageTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 6))
+        ttk.Label(
+            container,
+            text=(
+                "Double-click a paper row to inspect its local document preview, screening rationale, and how it aligns "
+                "with your research topic, question, and objective."
+            ),
+            style="HeroSubtitle.TLabel",
+            wraplength=1200,
+            justify="left",
+        ).grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+
+        left_card = ttk.LabelFrame(container, text="Paper snapshot", padding=8, style="Card.TLabelframe")
+        left_card.grid(row=2, column=0, sticky="nsew", padx=(0, 8))
+        left_card.columnconfigure(0, weight=1)
+        left_card.rowconfigure(2, weight=1)
+
+        self.document_path_label = ttk.Label(
+            left_card,
+            textvariable=self.document_status_var,
+            style="Muted.TLabel",
+            wraplength=420,
+            justify="left",
+        )
+        self.document_path_label.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        self.document_open_button = ttk.Button(
+            left_card,
+            text="Open External File",
+            style="Secondary.TButton",
+            command=self._open_document_external,
+        )
+        self.document_open_button.grid(row=1, column=0, sticky="w", pady=(0, 8))
+
+        summary_shell, self.document_summary_text = self._create_scrolled_text_widget(
+            left_card,
+            key="document_summary",
+            height=18,
+            wrap="word",
+        )
+        summary_shell.grid(row=2, column=0, sticky="nsew")
+
+        right_card = ttk.LabelFrame(container, text="Document text preview", padding=8, style="Card.TLabelframe")
+        right_card.grid(row=2, column=1, sticky="nsew")
+        right_card.columnconfigure(0, weight=1)
+        right_card.rowconfigure(0, weight=1)
+        content_shell, self.document_content_text = self._create_scrolled_text_widget(
+            right_card,
+            key="document_content",
+            height=24,
+            wrap="word",
+        )
+        content_shell.grid(row=0, column=0, sticky="nsew")
+        self._write_summary_widget(
+            self.document_summary_text,
+            "No paper is selected yet. Double-click a paper in All Papers, Included, Excluded, or Screening Audit.",
+        )
+        self._write_summary_widget(
+            self.document_content_text,
+            "Document preview will appear here when a local PDF or text-based artifact is available.",
+        )
 
     def _build_outputs_tab(self) -> None:
         """Create a richer artifact browser with export preview, summaries, and open actions."""
@@ -4888,6 +5046,7 @@ class DesktopWorkbench:
         self.screening_audit_tree.column("source", width=120, anchor="w")
         screening_tree_shell.grid(row=1, column=0, sticky="nsew")
         self.screening_audit_tree.bind("<<TreeviewSelect>>", self._handle_screening_audit_selection)
+        self.screening_audit_tree.bind("<Double-1>", lambda _event: self._open_document_from_screening_audit())
         ttk.Label(right, text="Decision details", style="PageTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 6))
         screening_text_shell, self.screening_audit_text = self._create_scrolled_text_widget(
             right,
@@ -5220,7 +5379,7 @@ class DesktopWorkbench:
             pass
         # Tkinter stays responsive because the worker communicates only through this queued pump.
         try:
-            self.root.after(100, self._poll_messages)
+            self.poll_after_id = self.root.after(100, self._poll_messages)
         except tk.TclError:
             return
 
@@ -5228,7 +5387,9 @@ class DesktopWorkbench:
         """Append one line to the log tab and keep the newest output visible."""
 
         self.log_widget.configure(state="normal")
-        self.log_widget.insert(tk.END, message + "\n")
+        tag_name, badge = self._resolve_log_style(message)
+        self.log_widget.insert(tk.END, f"{badge} ", ("log_badge", tag_name))
+        self.log_widget.insert(tk.END, message + "\n", (tag_name,))
         self.log_widget.see(tk.END)
         self.log_widget.configure(state="disabled")
 
@@ -5283,6 +5444,7 @@ class DesktopWorkbench:
         """Load a CSV file into one of the result tables."""
 
         tree = self.treeviews[key]
+        self.table_rows[key] = {}
         for item in tree.get_children():
             tree.delete(item)
         if not path.exists():
@@ -5296,8 +5458,13 @@ class DesktopWorkbench:
         for column in columns:
             tree.heading(column, text=column)
             tree.column(column, width=140, anchor="w")
-        for _, row in dataframe[columns].fillna("").iterrows():
-            tree.insert("", tk.END, values=[str(value)[:500] for value in row.tolist()])
+        for index, (_, row) in enumerate(dataframe.fillna("").iterrows()):
+            row_payload = {column: row.get(column, "") for column in dataframe.columns}
+            item_id = f"{key}-{index}"
+            decision = str(row_payload.get("inclusion_decision", "") or "").strip().lower()
+            tags = (decision,) if decision in {"include", "maybe", "exclude"} else ()
+            self.table_rows[key][item_id] = row_payload
+            tree.insert("", tk.END, iid=item_id, values=[str(row.get(column, ""))[:500] for column in columns], tags=tags)
 
     def _filter_all_papers(self, dataframe: pd.DataFrame) -> pd.DataFrame:
         """Apply the current UI filter and free-text search to the full paper table."""
@@ -5524,11 +5691,13 @@ class DesktopWorkbench:
         for item in self.run_history_tree.get_children():
             self.run_history_tree.delete(item)
         for index, entry in enumerate(self.run_history_entries):
+            status = str(entry.get("status", "") or "").strip().lower()
             self.run_history_tree.insert(
                 "",
                 tk.END,
                 iid=f"history-{index}",
                 values=(entry.get("timestamp", ""), entry.get("status", ""), entry.get("topic", "")),
+                tags=((status,) if status in {"completed", "failed", "stopped"} else ()),
             )
         if self.run_history_tree.get_children():
             first_item = self.run_history_tree.get_children()[0]
@@ -5648,6 +5817,8 @@ class DesktopWorkbench:
             item_id = f"audit-{index}"
             row_payload = row.to_dict()
             self.screening_audit_rows[item_id] = row_payload
+            decision = str(row_payload.get("inclusion_decision", "") or "").strip().lower()
+            tags = (decision,) if decision in {"include", "maybe", "exclude"} else ()
             self.screening_audit_tree.insert(
                 "",
                 tk.END,
@@ -5658,6 +5829,7 @@ class DesktopWorkbench:
                     row_payload.get("relevance_score", ""),
                     row_payload.get("source", ""),
                 ),
+                tags=tags,
             )
         if self.screening_audit_tree.get_children():
             first_item = self.screening_audit_tree.get_children()[0]
@@ -5700,6 +5872,185 @@ class DesktopWorkbench:
         ]
         self._write_summary_widget(self.screening_audit_text, "\n".join(lines))
 
+    def _open_document_from_table(self, key: str) -> None:
+        """Open the currently selected result-row preview in the embedded document viewer."""
+
+        tree = self.treeviews.get(key)
+        if tree is None:
+            return
+        selection = tree.selection()
+        if not selection:
+            return
+        row = self.table_rows.get(key, {}).get(selection[0])
+        if not row:
+            return
+        self._show_document_preview(row, source_label=key.replace("_", " ").title())
+
+    def _open_document_from_screening_audit(self) -> None:
+        """Open the selected audit row in the embedded document viewer."""
+
+        if self.screening_audit_tree is None:
+            return
+        selection = self.screening_audit_tree.selection()
+        if not selection:
+            return
+        row = self.screening_audit_rows.get(selection[0])
+        if not row:
+            return
+        self._show_document_preview(row, source_label="Screening Audit")
+
+    def _show_document_preview(self, row: dict[str, Any], *, source_label: str) -> None:
+        """Populate the document viewer tab from a result or audit row."""
+
+        document_path = self._candidate_document_path(row)
+        summary_text, content_text = self._build_document_preview(row, source_label=source_label, document_path=document_path)
+        self._write_summary_widget(self.document_summary_text, summary_text)
+        self._write_summary_widget(self.document_content_text, content_text)
+        if document_path is not None and document_path.exists():
+            self.document_status_var.set(f"Linked local document: {document_path}")
+        else:
+            self.document_status_var.set("No linked local document found. Showing the best available metadata/text preview.")
+        if self.document_open_button is not None:
+            if document_path is not None and document_path.exists():
+                self.document_open_button.state(["!disabled"])
+            else:
+                self.document_open_button.state(["disabled"])
+        if self.notebook is not None and self.document_tab is not None:
+            self.notebook.select(self.document_tab)
+
+    def _candidate_document_path(self, row: dict[str, Any]) -> Path | None:
+        """Return the best local file path referenced by a row, if one exists."""
+
+        candidates = (
+            row.get("pdf_path"),
+            row.get("local_pdf_path"),
+            row.get("downloaded_pdf_path"),
+            row.get("document_path"),
+        )
+        for candidate in candidates:
+            if not candidate:
+                continue
+            path = Path(str(candidate))
+            if path.exists():
+                return path
+        return None
+
+    def _paper_from_row(self, row: dict[str, Any]) -> PaperMetadata | None:
+        """Convert a row payload into `PaperMetadata` for richer research-fit scoring."""
+
+        title = str(row.get("title", "") or "").strip()
+        if not title:
+            return None
+        raw_payload = row.get("raw_payload")
+        if isinstance(raw_payload, str):
+            try:
+                raw_payload = json.loads(raw_payload)
+            except json.JSONDecodeError:
+                raw_payload = {"raw_payload": raw_payload}
+        elif not isinstance(raw_payload, dict):
+            raw_payload = {}
+        for key in ("extracted_passage", "relevance_explanation", "abstract", "full_text_excerpt"):
+            value = row.get(key)
+            if value:
+                raw_payload.setdefault(key, value)
+        year_value = row.get("year")
+        parsed_year: int | None = None
+        if year_value not in (None, ""):
+            try:
+                parsed_year = int(str(year_value).strip())
+            except ValueError:
+                parsed_year = None
+        return PaperMetadata(
+            title=title,
+            abstract=str(row.get("abstract", "") or ""),
+            authors=str(row.get("authors", "") or ""),
+            year=parsed_year,
+            source=str(row.get("source", "") or ""),
+            doi=str(row.get("doi", "") or ""),
+            url=str(row.get("url", "") or row.get("landing_page_url", "") or ""),
+            venue=str(row.get("venue", "") or ""),
+            raw_payload=raw_payload,
+        )
+
+    def _build_document_preview(
+        self,
+        row: dict[str, Any],
+        *,
+        source_label: str,
+        document_path: Path | None,
+    ) -> tuple[str, str]:
+        """Build the summary and content text shown by the embedded document viewer."""
+
+        lines = [
+            f"Source surface: {source_label}",
+            f"Title: {row.get('title', '')}",
+            f"Decision: {row.get('inclusion_decision', '') or '(not screened)'}",
+            f"Relevance score: {row.get('relevance_score', '') or '(not available)'}",
+            f"Source provider: {row.get('source', '') or '(unknown)'}",
+            f"Year: {row.get('year', '') or '(unknown)'}",
+            f"DOI: {row.get('doi', '') or '(not available)'}",
+            "",
+            f"Retain reason: {row.get('retain_reason', '') or '(not available)'}",
+            f"Exclusion reason: {row.get('exclusion_reason', '') or '(not available)'}",
+        ]
+        paper = self._paper_from_row(row)
+        if paper is not None:
+            try:
+                config = form_values_to_config(self._collect_form_values())
+                scorer = RelevanceScorer(config)
+                fit_score = scorer.deep_score(paper)
+                lines.extend(
+                    [
+                        "",
+                        "Research fit snapshot",
+                        f"- Topic match score: {fit_score:.2f}",
+                        f"- Research topic: {config.research_topic or '(not set)'}",
+                        f"- Research question: {config.research_question or '(not set)'}",
+                        f"- Review objective: {config.review_objective or '(not set)'}",
+                    ]
+                )
+                topic_match = scorer.evaluate_topic_match(paper)
+                lines.append(f"- Topic keyword support: {topic_match:.2f}")
+            except Exception as exc:  # pragma: no cover - defensive preview fallback
+                lines.extend(["", f"Research fit preview could not be computed: {exc}"])
+        content_candidates = [
+            row.get("extracted_passage"),
+            row.get("full_text_excerpt"),
+            row.get("abstract"),
+            row.get("relevance_explanation"),
+        ]
+        content_text = ""
+        if document_path is not None and document_path.suffix.lower() == ".pdf":
+            try:
+                extractor = FullTextExtractor(max_chars=12000)
+                content_text = extractor.extract_excerpt(document_path)
+                if content_text:
+                    lines.extend(["", f"Local document: {document_path.name}", "A local PDF excerpt is shown in the preview pane."])
+            except Exception as exc:  # pragma: no cover - defensive preview fallback
+                lines.extend(["", f"Local PDF preview failed: {exc}"])
+        if not content_text:
+            for candidate in content_candidates:
+                if candidate:
+                    content_text = str(candidate)
+                    break
+        if not content_text:
+            content_text = (
+                "No local PDF excerpt or rich text snippet is available for this paper yet. "
+                "Try downloading PDFs or rerunning with full-text analysis enabled."
+            )
+        return "\n".join(lines), content_text
+
+    def _open_document_external(self) -> None:
+        """Open the currently linked document outside the app when one is available."""
+
+        status_text = self.document_status_var.get()
+        if not status_text.startswith("Linked local document: "):
+            return
+        candidate = status_text.removeprefix("Linked local document: ").strip()
+        if not candidate:
+            return
+        self._open_path(Path(candidate))
+
     def _open_path(self, path: Path) -> None:
         """Open a file or directory using the host operating system defaults."""
 
@@ -5720,6 +6071,12 @@ class DesktopWorkbench:
         if self.current_controller is not None:
             self.current_controller.request_stop()
         self.hover_tooltip.hide()
+        if self.poll_after_id is not None:
+            try:
+                self.root.after_cancel(self.poll_after_id)
+            except tk.TclError:
+                pass
+            self.poll_after_id = None
         for sequence in ("<MouseWheel>", "<Shift-MouseWheel>", "<Button-4>", "<Button-5>"):
             try:
                 self.root.unbind_all(sequence)
