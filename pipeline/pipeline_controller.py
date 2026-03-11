@@ -573,6 +573,11 @@ class PipelineController:
         full_text_screened_count = len(
             [paper for paper in prepared_candidates if paper.raw_payload.get("full_text_excerpt")]
         )
+        LOGGER.info(
+            "Screening preparation finished for %s papers. Full-text excerpts are available for %s papers.",
+            len(prepared_candidates),
+            full_text_screened_count,
+        )
         results: list[tuple[int, ScreeningResult, dict[str, Any]]] = []
         cached_results: list[tuple[int, ScreeningResult, dict[str, Any]]] = []
         uncached_candidates: list[PaperMetadata] = []
@@ -588,8 +593,28 @@ class PipelineController:
 
         if cached_results:
             LOGGER.info("Reused %s cached screening results.", len(cached_results))
+        LOGGER.info(
+            "Screening queue status: %s cached, %s remaining to analyze.",
+            len(cached_results),
+            len(uncached_candidates),
+        )
+
+        if not uncached_candidates:
+            LOGGER.info("No uncached papers remain after cache inspection; screening updates are already complete.")
+            for database_id, result, screening_details in cached_results:
+                self.database.update_screening_result(database_id, result, screening_details=screening_details)
+            return {
+                "screened_count": len(cached_results),
+                "full_text_screened_count": full_text_screened_count,
+            }
 
         screening_workers = self._screening_worker_count()
+        LOGGER.info(
+            "Starting AI screening for %s papers with %s worker thread%s.",
+            len(uncached_candidates),
+            screening_workers,
+            "" if screening_workers == 1 else "s",
+        )
         with ThreadPoolExecutor(max_workers=screening_workers) as executor:
             self._active_executors.append(executor)
             try:
@@ -617,6 +642,14 @@ class PipelineController:
                             screening_details=screening_details,
                         )
                         results.append((paper.database_id or 0, result, screening_details))
+                        LOGGER.info(
+                            "Screening progress: %s/%s completed. Latest paper: '%s' -> %s (%.2f).",
+                            len(results),
+                            len(future_map),
+                            paper.title,
+                            result.decision,
+                            result.relevance_score,
+                        )
                     except Exception as exc:  # noqa: BLE001
                         LOGGER.exception("Screening failed for %s: %s", paper.title, exc)
             finally:
@@ -625,6 +658,12 @@ class PipelineController:
 
         for database_id, result, screening_details in [*cached_results, *results]:
             self.database.update_screening_result(database_id, result, screening_details=screening_details)
+        LOGGER.info(
+            "Screening completed for %s papers in total (%s cached, %s newly analyzed).",
+            len(cached_results) + len(results),
+            len(cached_results),
+            len(results),
+        )
         return {
             "screened_count": len(cached_results) + len(results),
             "full_text_screened_count": full_text_screened_count,
