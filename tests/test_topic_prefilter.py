@@ -212,6 +212,43 @@ class TopicPrefilterTests(unittest.TestCase):
         self.assertIn("question 'How relevant are papers to AI governance in health?'", result.explanation)
         self.assertIn("objective 'Retain papers focused on AI governance, evaluation, and deployment.'", result.explanation)
 
+    def test_local_topic_matcher_extracts_topics_and_weighted_keyword_details(self) -> None:
+        config = self._config(
+            topic_prefilter_enabled=True,
+            topic_prefilter_weighted_keywords=[
+                "systematic review|1.6",
+                "large language models|1.4",
+                "screening automation|1.2",
+            ],
+            topic_prefilter_min_keyword_matches=2,
+            topic_prefilter_match_threshold=50.0,
+            topic_prefilter_near_fit_threshold=30.0,
+        )
+        paper = self._paper(
+            title="Large language models for systematic review screening automation",
+            abstract=(
+                "This paper evaluates large language models for systematic review screening automation "
+                "and compares screening workflows."
+            ),
+            raw_payload={"keywords": ["systematic review", "screening automation", "large language models"]},
+        )
+
+        with patch("analysis.topic_prefilter.load_embedding_runtime", return_value=(_FakeTorch, _FakeTokenizerLoader, _FakeModelLoader)), \
+             patch.object(LocalTopicMatcher, "_embed_texts", return_value=[_FakeVector(1.0), _FakeVector(0.88)]):
+            matcher = LocalTopicMatcher(config)
+            result = matcher.score_paper(paper)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result.research_fit_label, "STRONG_FIT")
+        self.assertGreaterEqual(result.weighted_keyword_score, 50.0)
+        self.assertGreaterEqual(result.matched_keyword_count, 2)
+        self.assertIn("systematic review", [topic.lower() for topic in result.extracted_topics])
+        self.assertTrue(result.keyword_match_details)
+        self.assertEqual(result.keyword_match_details[0]["status"], "matched")
+        self.assertIn("Extracted paper topics", result.explanation)
+        self.assertIn("Research fit: STRONG_FIT", result.explanation)
+
     def test_matched_keywords_can_use_topic_question_and_objective_text(self) -> None:
         config = ResearchConfig(
             research_topic="governance evaluation workflows",
