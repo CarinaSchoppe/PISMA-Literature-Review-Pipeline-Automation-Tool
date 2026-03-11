@@ -16,7 +16,7 @@ from unittest.mock import Mock, patch
 import pandas as pd
 
 from ui.desktop_app import DesktopWorkbench, HoverTooltip, UILogHandler, launch_desktop_app
-from tests.test_desktop_app import DesktopWorkbenchTests
+from tests import test_desktop_app as desktop_app_tests
 
 
 def _walk_widgets(widget: tk.Misc):
@@ -115,8 +115,37 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
                     continue
         self.assertIsInstance(texts, list)
 
+    def test_responsive_overview_and_pane_guard_branches(self) -> None:
+        self.workbench._set_collapsible_section_visibility(None, None, visible=False, expanded_text="hide", collapsed_text="show")
+
+        pane = Mock()
+        pane.update_idletasks.side_effect = tk.TclError("bad pane")
+        self.workbench.settings_panedwindow = pane
+        self.workbench._apply_default_settings_pane_positions()
+
+        self.workbench.settings_panedwindow = None
+        self.workbench._apply_default_settings_pane_positions()
+
+        self.workbench.workspace_overview_content = Mock()
+        self.workbench.workspace_overview_toggle_button = Mock()
+        self.workbench.settings_overview_content = Mock()
+        self.workbench.settings_overview_toggle_button = Mock()
+        self.workbench.settings_page_description_label = Mock()
+        self.workbench.settings_mode_var.set("advanced")
+        with patch.object(self.workbench.root, "winfo_width", return_value=1600), patch.object(
+            self.workbench.root, "winfo_height", return_value=980
+        ), patch.object(self.workbench.root, "after_idle") as after_idle:
+            self.workbench._apply_responsive_layout()
+        self.assertFalse(self.workbench.compact_window_mode.get())
+        self.workbench.workspace_overview_content.grid.assert_called()
+        self.workbench.settings_overview_content.grid.assert_called()
+        self.workbench.settings_page_description_label.grid.assert_called()
+        after_idle.assert_called()
+
+        explicit_broken = Mock()
+        explicit_broken.cget.side_effect = tk.TclError("broken")
         explicit_texts: list[str] = []
-        for child in [object(), broken]:
+        for child in [object(), explicit_broken]:
             if not hasattr(child, "cget"):
                 continue
             try:
@@ -130,11 +159,11 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
             _find_button(self.workbench.root, "missing control")
 
     def test_desktop_app_core_methods_execute_for_full_file_coverage(self) -> None:
-        collect_case = DesktopWorkbenchTests("test_collect_form_values_ignores_placeholder_text")
+        collect_case = desktop_app_tests.DesktopWorkbenchTests("test_collect_form_values_ignores_placeholder_text")
         collect_case.workbench = self.workbench
         collect_case.test_collect_form_values_ignores_placeholder_text()
 
-        handbook_case = DesktopWorkbenchTests("test_handbook_contains_output_and_verbose_guides")
+        handbook_case = desktop_app_tests.DesktopWorkbenchTests("test_handbook_contains_output_and_verbose_guides")
         handbook_case.workbench = self.workbench
         handbook_case.test_handbook_contains_output_and_verbose_guides()
 
