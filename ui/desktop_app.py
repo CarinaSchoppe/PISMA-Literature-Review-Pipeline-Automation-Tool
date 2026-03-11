@@ -1280,6 +1280,18 @@ class DesktopWorkbench:
             "Higher values create a wider maybe zone below the main threshold.",
             "Lower values force papers to be either clearly kept or clearly excluded more often.",
         ),
+        "topic_prefilter_match_threshold": (
+            "Higher values make the green strong-fit label harder to reach, so only very close topical matches qualify.",
+            "Lower values make the strong-fit label easier to reach and widen the set of papers that count as strong matches.",
+        ),
+        "topic_prefilter_near_fit_threshold": (
+            "Higher values shrink the amber near-fit band and move more papers into weak-fit.",
+            "Lower values widen the amber near-fit band and keep more borderline papers visible for review.",
+        ),
+        "topic_prefilter_min_keyword_matches": (
+            "Higher values require more separate weighted keywords to match strongly before a paper can be considered a strong fit.",
+            "Lower values let a paper reach strong-fit with fewer strong keyword matches.",
+        ),
         "pages_to_retrieve": (
             "Higher values ask each source for more result pages, which can improve recall but increases runtime and API traffic.",
             "Lower values keep runs faster and cheaper when you are exploring a topic or testing settings.",
@@ -1385,6 +1397,7 @@ class DesktopWorkbench:
         self.artifact_details: dict[str, dict[str, str]] = {}
         self.table_rows: dict[str, dict[str, dict[str, Any]]] = {}
         self.screening_audit_rows: dict[str, dict[str, Any]] = {}
+        self.research_fit_rows: dict[str, dict[str, Any]] = {}
         self.document_status_var = tk.StringVar(value="No paper selected yet.")
         self.active_settings_page_var = tk.StringVar(value="Review Setup")
         self.active_settings_page_description_var = tk.StringVar(
@@ -1442,6 +1455,14 @@ class DesktopWorkbench:
         self.audit_include_badge: ttk.Label | None = None
         self.audit_maybe_badge: ttk.Label | None = None
         self.audit_exclude_badge: ttk.Label | None = None
+        self.research_fit_strong_badge_var = tk.StringVar(value="[FIT] 0 strong")
+        self.research_fit_near_badge_var = tk.StringVar(value="[FIT] 0 near")
+        self.research_fit_weak_badge_var = tk.StringVar(value="[FIT] 0 weak")
+        self.research_fit_strong_badge: ttk.Label | None = None
+        self.research_fit_near_badge: ttk.Label | None = None
+        self.research_fit_weak_badge: ttk.Label | None = None
+        self.research_fit_tree: ttk.Treeview | None = None
+        self.research_fit_text: tk.Text | None = None
         self.poll_after_id: str | None = None
         self.responsive_after_id: str | None = None
         self.settings_pane_after_id: str | None = None
@@ -2397,6 +2418,52 @@ class DesktopWorkbench:
             return f"[{normalized[:3].upper()}] {decision}", "neutral"
         return "[REV] Not screened", "muted"
 
+    def _research_fit_badge_text(self, fit_label: str) -> tuple[str, str]:
+        """Return a visible badge string and tone for one research-fit label."""
+
+        normalized = fit_label.strip().upper()
+        if normalized == "STRONG_FIT":
+            return "[FIT] Strong fit", "success"
+        if normalized == "NEAR_FIT":
+            return "[FIT] Near fit", "warning"
+        if normalized == "WEAK_FIT":
+            return "[FIT] Weak fit", "danger"
+        if normalized:
+            return f"[FIT] {fit_label}", "neutral"
+        return "[FIT] Not scored", "muted"
+
+    def _coerce_json_list(self, value: Any) -> list[Any]:
+        """Normalize list-like row values that may arrive as JSON strings."""
+
+        if isinstance(value, list):
+            return value
+        if isinstance(value, str):
+            candidate = value.strip()
+            if not candidate:
+                return []
+            try:
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError:
+                return [item.strip() for item in candidate.split(";") if item.strip()]
+            return parsed if isinstance(parsed, list) else []
+        return []
+
+    def _topic_detail_payload(self, row: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
+        """Extract research-fit topics and per-keyword evidence from a row payload."""
+
+        screening_details = row.get("screening_details")
+        extracted_topics = row.get("topic_prefilter_extracted_topics")
+        keyword_details = row.get("topic_prefilter_keyword_details")
+        if isinstance(screening_details, dict):
+            extracted_topics = screening_details.get("topic_prefilter_extracted_topics", extracted_topics)
+            keyword_details = screening_details.get("topic_prefilter_keyword_details", keyword_details)
+        normalized_details: list[dict[str, Any]] = []
+        for entry in self._coerce_json_list(keyword_details):
+            if isinstance(entry, dict):
+                normalized_details.append(entry)
+        normalized_topics = [str(topic).strip() for topic in self._coerce_json_list(extracted_topics) if str(topic).strip()]
+        return normalized_topics, normalized_details
+
     def _build_layout(self) -> None:
         """Construct the top-level toolbar, notebook, and status bar widgets."""
         shell = ttk.Frame(self.root, padding=12, style="TFrame")
@@ -2577,12 +2644,14 @@ class DesktopWorkbench:
         self.charts_tab = ttk.Frame(notebook)
         self.run_history_tab = ttk.Frame(notebook)
         self.screening_audit_tab = ttk.Frame(notebook)
+        self.research_fit_tab = ttk.Frame(notebook)
         notebook.add(self.settings_tab, text="Settings")
         notebook.add(self.handbook_tab, text="Handbook")
         notebook.add(self.log_tab, text="Run Log")
         notebook.add(self.all_tab, text="All Papers")
         notebook.add(self.included_tab, text="Included")
         notebook.add(self.excluded_tab, text="Excluded")
+        notebook.add(self.research_fit_tab, text="Research Fit")
         notebook.add(self.document_tab, text="Document Viewer")
         notebook.add(self.outputs_tab, text="Outputs")
         notebook.add(self.charts_tab, text="Charts")
@@ -2595,6 +2664,7 @@ class DesktopWorkbench:
         self._build_table_tab(self.all_tab, "all_papers", include_filters=True)
         self._build_table_tab(self.included_tab, "included_papers")
         self._build_table_tab(self.excluded_tab, "excluded_papers")
+        self._build_research_fit_tab()
         self._build_document_tab()
         self._build_outputs_tab()
         self._build_charts_tab()
@@ -4292,6 +4362,9 @@ class DesktopWorkbench:
             "warning": {"background": "#fff5e8", "foreground": "#b56a00"},
             "ready": {"background": "#eafaf1", "foreground": "#0f8a4a"},
             "attention": {"background": "#fff5e8", "foreground": "#b56a00"},
+            "strong_fit": {"background": "#eafaf1", "foreground": "#0f8a4a"},
+            "near_fit": {"background": "#fff5e8", "foreground": "#b56a00"},
+            "weak_fit": {"background": "#fff0ef", "foreground": "#c24136"},
             "muted": {"background": "#f3f5f8", "foreground": "#667085"},
             "artifact_csv": {"background": "#eef8ff", "foreground": "#175cd3"},
             "artifact_json": {"background": "#eef4ff", "foreground": "#3538cd"},
