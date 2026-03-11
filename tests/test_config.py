@@ -641,4 +641,3 @@ class ConfigTests(unittest.TestCase):
         self.assertTrue(config.download_pdfs)
         self.assertFalse(config.analyze_full_text)
         self.assertEqual(config.verbosity, "normal")
-
