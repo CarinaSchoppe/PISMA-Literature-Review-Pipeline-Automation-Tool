@@ -57,6 +57,7 @@ class PipelineIntegrationTests(unittest.TestCase):
             second_run = PipelineController(config).run()
 
             self.assertEqual(first_run["database_count"], second_run["database_count"])
+            self.assertEqual(len(first_run["papers_snapshot"]), first_run["database_count"])
             self.assertTrue((root / "results" / "papers.csv").exists())
             self.assertTrue((root / "results" / "included_papers.csv").exists())
             self.assertTrue((root / "results" / "excluded_papers.csv").exists())
