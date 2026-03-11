@@ -218,6 +218,9 @@ Already present:
 - grouped storage/path configuration
 - export preview before run
 - artifact browser with open actions
+- embedded document viewer for paper-level inspection inside the workbench
+- semantic run-log highlighting for success, warning, error, and trace states
+- active-widget mouse-wheel routing so smaller-window workflows remain usable
 - chart preview tab
 - run history tab
 - screening audit tab

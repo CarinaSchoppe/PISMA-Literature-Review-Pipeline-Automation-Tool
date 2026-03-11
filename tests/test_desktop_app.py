@@ -215,12 +215,15 @@ class DesktopWorkbenchTests(unittest.TestCase):
         self.assertIn("Charts", notebook_labels)
         self.assertIn("Run History", notebook_labels)
         self.assertIn("Screening Audit", notebook_labels)
+        self.assertIn("Document Viewer", notebook_labels)
         self.assertIsNotNone(self.workbench.outputs_preview_text)
         self.assertIsNotNone(self.workbench.artifact_summary_text)
         self.assertIsNotNone(self.workbench.provider_health_tree)
         self.assertIsNotNone(self.workbench.chart_canvas)
         self.assertIsNotNone(self.workbench.run_history_tree)
         self.assertIsNotNone(self.workbench.screening_audit_tree)
+        self.assertIsNotNone(self.workbench.document_summary_text)
+        self.assertIsNotNone(self.workbench.document_content_text)
 
     def test_scrollable_shells_exist_for_tables_logs_panels_and_visuals(self) -> None:
         for tree_key in (
@@ -239,16 +242,18 @@ class DesktopWorkbenchTests(unittest.TestCase):
                 self.assertIn("horizontal", self.workbench.tree_scrollbars[tree_key])
 
         for text_key in (
-                "run_log",
-                "handbook_text",
-                "outputs_preview",
-                "artifact_summary",
-                "charts_summary",
-                "run_history_text",
-                "screening_audit_text",
-                "model_summary",
-                "output_summary",
-                "export_preview",
+            "run_log",
+            "handbook_text",
+            "outputs_preview",
+            "artifact_summary",
+            "charts_summary",
+            "run_history_text",
+            "screening_audit_text",
+            "document_summary",
+            "document_content",
+            "model_summary",
+            "output_summary",
+            "export_preview",
         ):
             with self.subTest(text_key=text_key):
                 self.assertIn(text_key, self.workbench.text_scrollbars)
@@ -258,6 +263,38 @@ class DesktopWorkbenchTests(unittest.TestCase):
         self.assertIn("chart_preview", self.workbench.canvas_scrollbars)
         self.assertIn("vertical", self.workbench.canvas_scrollbars["chart_preview"])
         self.assertIn("horizontal", self.workbench.canvas_scrollbars["chart_preview"])
+
+    def test_log_widget_uses_semantic_badges_and_tags(self) -> None:
+        self.workbench._append_log("2026-03-12 10:00:00 | INFO | pipeline.pipeline_controller | Pipeline finished in 0.02 seconds.")
+        log_text = self.workbench.log_widget.get("1.0", tk.END)
+        self.assertIn("[OK]", log_text)
+        self.assertIn("log_success", self.workbench.log_widget.tag_names())
+        self.assertIn("log_warning", self.workbench.log_widget.tag_names())
+        self.assertIn("log_error", self.workbench.log_widget.tag_names())
+
+    def test_double_click_document_preview_can_open_from_result_table(self) -> None:
+        title = "Preview paper"
+        item_id = "all_papers-0"
+        self.workbench.table_rows["all_papers"] = {
+            item_id: {
+                "title": title,
+                "abstract": "Preview abstract",
+                "source": "fixture",
+                "inclusion_decision": "include",
+                "relevance_score": 88.0,
+            }
+        }
+        tree = self.workbench.treeviews["all_papers"]
+        tree["columns"] = ("title",)
+        tree.insert("", tk.END, iid=item_id, values=(title,))
+        tree.selection_set(item_id)
+        tree.focus(item_id)
+
+        self.workbench._open_document_from_table("all_papers")
+
+        summary_text = self.workbench.document_summary_text.get("1.0", tk.END)
+        self.assertIn(title, summary_text)
+        self.assertEqual(self.workbench.notebook.tab(self.workbench.notebook.select(), "text"), "Document Viewer")
 
     def test_compact_and_advanced_settings_modes_toggle_helper_density(self) -> None:
         intro_label = self.workbench.settings_page_intro_labels["Review Setup"]
@@ -271,6 +308,8 @@ class DesktopWorkbenchTests(unittest.TestCase):
 
         self.workbench.settings_mode_var.set("advanced")
         self.workbench._apply_settings_mode()
+        self.workbench._apply_workspace_overview_visibility(True)
+        self.workbench._apply_settings_overview_visibility(True)
 
         self.assertEqual(intro_label.winfo_manager(), "grid")
         self.assertEqual(summary_label.winfo_manager(), "grid")
@@ -281,6 +320,8 @@ class DesktopWorkbenchTests(unittest.TestCase):
     def test_overview_toggles_and_small_window_mode_keep_editing_area_visible(self) -> None:
         self.workbench.settings_mode_var.set("advanced")
         self.workbench._apply_settings_mode()
+        self.workbench._apply_workspace_overview_visibility(True)
+        self.workbench._apply_settings_overview_visibility(True)
         self.assertEqual(self.workbench.workspace_overview_content.winfo_manager(), "grid")
         self.assertEqual(self.workbench.settings_overview_content.winfo_manager(), "grid")
 

@@ -144,6 +144,7 @@ Default local embedding model:
 The prefilter:
 
 * builds one review brief from the topic, research question, objective, keywords, and inclusion criteria
+* uses the research topic, research question, and review objective directly in the local research-fit explanation path
 * embeds the review brief and each paper locally on the machine
 * compares them with cosine similarity
 * classifies each paper as `HIGH_RELEVANCE`, `REVIEW`, or `LOW_RELEVANCE`
@@ -192,6 +193,8 @@ The guided workbench includes:
 - responsive compact-window behavior that automatically trims oversized overview sections and tightens pane defaults on smaller windows
 - scrollable settings pages, a scrollable quick-edit panel, and a scrollable summary inspector so the window stays usable on smaller screens
 - scrollable logs, result tables, handbook content, artifact browser tables, chart previews, run history, and screening audit views so no important content is trapped off-screen on smaller windows
+- mouse-wheel routing follows the active inner widget so smaller windows stay usable without fullscreen
+- `Shift + MouseWheel` scrolls wide tables and previews horizontally where available
 - `Show advanced settings` toggle so lower-level runtime options stay out of the way until needed
 - persisted GUI defaults for `Compact` vs `Advanced` density and whether advanced pages start expanded
 - quick-edit controls for the most-used model, threshold, and output settings, without forcing every option onto the main form at once
@@ -202,14 +205,18 @@ The guided workbench includes:
 - hover help and keyboard-focus help for settings, with detailed English explanations that describe the purpose of each flag, what changes when a switch is on or off, and concrete examples for common workflows
 - placeholder text and nearby input guidance for review-topic, keyword, criteria, and filter fields, including explicit separator examples for commas, semicolons, and line breaks
 - live `Run Log` tab
+- semantic log highlighting with badges for neutral info, green success, orange warnings, red errors, and dimmed trace lines
 - result tabs for:
-    - `All Papers`
-    - `Included`
-    - `Excluded`
-    - `Outputs`
-    - `Charts`
-    - `Run History`
-    - `Screening Audit`
+  - `All Papers`
+  - `Included`
+  - `Excluded`
+  - `Outputs`
+  - `Charts`
+  - `Run History`
+  - `Screening Audit`
+  - `Document Viewer`
+- double-click result and audit rows to open the embedded document viewer
+- document previews combine local PDF excerpts when available with screening rationale, retain/exclude reasoning, and research-fit context
 - export preview before the run starts, so you can confirm which files and folders the current settings will produce
 - an artifact browser with summary panes and open-folder actions for generated files
 - `Analyze Stored Results` button to skip discovery and rerun screening/reporting

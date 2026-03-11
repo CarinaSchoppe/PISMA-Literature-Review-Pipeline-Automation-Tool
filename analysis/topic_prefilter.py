@@ -138,7 +138,9 @@ class LocalTopicMatcher(BaseTopicMatcher):
             f"Local semantic topic prefilter using {self.model_name} measured cosine similarity {similarity:.2f} "
             f"({score:.1f}/100) against the review brief. The configured REVIEW threshold is "
             f"{self.review_threshold:.2f} and the HIGH_RELEVANCE threshold is {self.high_threshold:.2f}. "
-            f"The paper was classified as {classification}. Source text sections used: {', '.join(sections)}."
+            f"The paper was classified as {classification}. Review focus used for matching: "
+            f"topic '{self.config.research_topic}', question '{self.config.research_question}', "
+            f"objective '{self.config.review_objective}'. Source text sections used: {', '.join(sections)}."
         )
         if matched_keywords:
             explanation += f" Matched review keywords: {', '.join(matched_keywords)}."
@@ -187,13 +189,18 @@ class LocalTopicMatcher(BaseTopicMatcher):
         """Assemble the semantic query text from the review brief fields."""
 
         parts = [
+            f"Research topic: {self.config.research_topic}".strip(),
+            f"Research question: {self.config.research_question}".strip(),
+            f"Review objective: {self.config.review_objective}".strip(),
+            f"Search keywords: {'; '.join(self.config.search_keywords)}".strip(),
+            f"Inclusion criteria: {'; '.join(self.config.inclusion_criteria)}".strip(),
+        ]
+        weighted_focus = [
             self.config.research_topic,
             self.config.research_question,
             self.config.review_objective,
-            " ".join(self.config.search_keywords),
-            " ".join(self.config.inclusion_criteria),
         ]
-        return " ".join(part.strip() for part in parts if part and part.strip())
+        return " ".join(part.strip() for part in [*parts, *weighted_focus] if part and part.strip())
 
     def _build_paper_text(self, paper: PaperMetadata) -> tuple[str, list[str]]:
         """Select the paper text window used for semantic topic comparison."""
@@ -235,11 +242,26 @@ class LocalTopicMatcher(BaseTopicMatcher):
         """Return review keywords that are visibly present in the paper text window."""
 
         normalized = normalize_title(paper_text)
+        normalized_tokens = set(normalized.split())
         matched: list[str] = []
-        for keyword in [*self.config.search_keywords, *self.config.inclusion_criteria]:
+        for keyword in [
+            self.config.research_topic,
+            self.config.research_question,
+            self.config.review_objective,
+            *self.config.search_keywords,
+            *self.config.inclusion_criteria,
+        ]:
             normalized_keyword = normalize_title(keyword)
-            if normalized_keyword and normalized_keyword in normalized and keyword not in matched:
+            if not normalized_keyword or keyword in matched:
+                continue
+            if normalized_keyword in normalized:
                 matched.append(keyword)
+                continue
+            keyword_tokens = [token for token in normalized_keyword.split() if len(token) >= 4]
+            if len(keyword_tokens) >= 2:
+                overlap = sum(1 for token in keyword_tokens if token in normalized_tokens)
+                if overlap / len(keyword_tokens) >= 0.6:
+                    matched.append(keyword)
         return matched
 
     def _classify_similarity(self, similarity: float) -> TopicPrefilterLabel:
