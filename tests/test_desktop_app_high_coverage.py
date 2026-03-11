@@ -137,6 +137,22 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
         self.workbench._toggle_hover_help()
         self.assertIn("Hover help enabled", self.workbench.status_var.get())
 
+        original_label = self.workbench.slider_value_labels.pop("maybe_threshold_margin")
+        original_group = self.workbench.slider_value_label_groups.pop("maybe_threshold_margin")
+        self.workbench._sync_slider_label("maybe_threshold_margin")
+        self.workbench.slider_value_labels["maybe_threshold_margin"] = original_label
+        self.workbench.slider_value_label_groups["maybe_threshold_margin"] = original_group
+
+        broken_label = Mock()
+        broken_label.configure.side_effect = tk.TclError("broken label")
+        original_threshold_label = self.workbench.slider_value_labels["relevance_threshold"]
+        original_threshold_group = self.workbench.slider_value_label_groups["relevance_threshold"]
+        self.workbench.slider_value_labels["relevance_threshold"] = broken_label
+        self.workbench.slider_value_label_groups["relevance_threshold"] = [broken_label]
+        self.workbench._sync_slider_label("relevance_threshold")
+        self.workbench.slider_value_labels["relevance_threshold"] = original_threshold_label
+        self.workbench.slider_value_label_groups["relevance_threshold"] = original_threshold_group
+
     def test_scroll_visibility_and_search_guard_branches(self) -> None:
         self.workbench.settings_search_var.set("definitely-no-setting")
         self.workbench._refresh_settings_search_results()
@@ -369,6 +385,7 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
         _find_button(dialog, "Update Pass").invoke()
         tree.selection_remove(tree.selection())
         tree.event_generate("<<TreeviewSelect>>")
+        _find_button(dialog, "Duplicate Pass").invoke()
 
         tree.selection_remove("0")
         _find_button(dialog, "Remove Pass").invoke()
@@ -400,6 +417,148 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
         _find_button(append_dialog, "Apply").invoke()
         appended = self.workbench._current_analysis_passes()
         self.assertEqual(len(appended), before_count + 1)
+
+        for provider_name, expected in (
+            ("heuristic", "local rule-based scoring"),
+            ("openai_compatible", "reachable API base URL"),
+            ("ollama", "locally running server"),
+        ):
+            self.workbench._write_analysis_passes(
+                [
+                    {
+                        "name": "pass_hint",
+                        "provider": provider_name,
+                        "threshold": 75,
+                        "decision_mode": "strict",
+                        "margin": 8,
+                        "model_name": "",
+                        "min_input_score": None,
+                    }
+                ]
+            )
+            self.workbench._open_pass_builder()
+            hint_dialog = [widget for widget in self.workbench.root.winfo_children() if isinstance(widget, tk.Toplevel)][-1]
+            hint_parts: list[str] = []
+            for widget in _walk_widgets(hint_dialog):
+                if isinstance(widget, tk.Toplevel) or not hasattr(widget, "cget"):
+                    continue
+                try:
+                    text = str(widget.cget("text"))
+                except tk.TclError:
+                    continue
+                if text:
+                    hint_parts.append(text)
+            hint_text = " ".join(hint_parts)
+            self.assertIn(expected, hint_text)
+            hint_dialog.destroy()
+
+    def test_new_output_history_chart_and_audit_helper_branches(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            csv_path = root / "broken.csv"
+            csv_path.write_text('title,abstract\n"broken', encoding="utf-8")
+            json_path = root / "broken.json"
+            json_path.write_text("{bad", encoding="utf-8")
+            markdown_path = root / "report.md"
+            markdown_path.write_text("# Summary\n\nHello", encoding="utf-8")
+            db_path = root / "state.db"
+            db_path.write_bytes(b"sqlite")
+            txt_path = root / "notes.txt"
+            txt_path.write_text("notes", encoding="utf-8")
+            folder_path = root / "artifacts"
+            folder_path.mkdir()
+
+            entries = self.workbench._artifact_entries_from_result(
+                {
+                    "papers_csv": str(csv_path),
+                    "results_dir": str(folder_path),
+                    "blank_path": "   ",
+                    "ignored_status": "completed",
+                }
+            )
+            self.assertEqual(len(entries), 2)
+            self.assertIn("Artifact status", self.workbench._summarize_artifact_path("missing", root / "missing.csv"))
+            self.assertIn("could not parse the CSV preview", self.workbench._summarize_artifact_path("csv", csv_path))
+            self.assertIn("could not parse the JSON preview", self.workbench._summarize_artifact_path("json", json_path))
+            self.assertIn("SQLite database", self.workbench._summarize_artifact_path("db", db_path))
+            self.assertIn("Artifact type: .txt", self.workbench._summarize_artifact_path("txt", txt_path))
+
+            original_read_text = Path.read_text
+
+            def _patched_read_text(path_obj, *args, **kwargs):
+                if Path(path_obj) == markdown_path:
+                    raise OSError("cannot read markdown")
+                return original_read_text(path_obj, *args, **kwargs)
+
+            with patch("pathlib.Path.read_text", new=_patched_read_text):
+                self.assertIn("could not read the Markdown preview", self.workbench._summarize_artifact_path("md", markdown_path))
+
+            self.workbench.scalar_vars["download_pdfs"].set(True)
+            self.workbench.scalar_vars["pdf_download_mode"].set("all")
+            preview_all = self.workbench._build_export_preview_text(self.workbench._collect_form_values())
+            self.assertIn("All available PDFs stay in the main paper PDF folder.", preview_all)
+            self.workbench.scalar_vars["pdf_download_mode"].set("relevant_only")
+            preview_split = self.workbench._build_export_preview_text(self.workbench._collect_form_values())
+            self.assertIn("Relevant-only PDF folder", preview_split)
+
+            self.workbench._load_outputs({"papers_csv": str(csv_path), "results_dir": str(folder_path)})
+            selection = self.workbench.outputs_tree.selection()
+            self.assertTrue(selection)
+            self.workbench.outputs_tree.selection_remove(selection)
+            self.workbench._handle_output_selection(None)
+            self.workbench._open_selected_output_parent()
+            self.workbench.artifact_details.clear()
+            self.workbench._open_selected_output_parent()
+            self.workbench._render_output_summary("missing")
+            self.workbench.outputs_tree = None
+            self.workbench._handle_output_selection(None)
+            self.workbench._open_selected_output_parent()
+
+            self.workbench.scalar_vars["data_dir"].set(str(root))
+            history_path = self.workbench._current_history_path()
+            history_path.write_text("{bad", encoding="utf-8")
+            self.assertEqual(self.workbench._load_run_history_entries(), [])
+            history_path.write_text(json.dumps({"status": "wrong-shape"}), encoding="utf-8")
+            self.assertEqual(self.workbench._load_run_history_entries(), [])
+            self.workbench.run_history_tree = None
+            self.workbench._refresh_run_history_tab()
+            self.workbench._handle_run_history_selection(None)
+            self.workbench.run_history_tree = next(
+                widget for widget in _walk_widgets(self.workbench.run_history_tab) if widget.winfo_class() == "Treeview"
+            )
+            history_path.write_text(json.dumps([]), encoding="utf-8")
+            self.workbench._refresh_run_history_tab()
+            self.assertIn("No runs have been recorded", self.workbench.run_history_text.get("1.0", tk.END))
+            self.workbench._handle_run_history_selection(None)
+            self.workbench._render_run_history_entry("history-bad")
+            self.workbench.run_history_entries = []
+            self.workbench._render_run_history_entry("history-3")
+
+            self.workbench.chart_canvas = None
+            self.workbench._refresh_chart_preview(root / "missing_papers.csv")
+            self.workbench.chart_canvas = next(
+                widget for widget in _walk_widgets(self.workbench.charts_tab) if widget.winfo_class() == "Canvas"
+            )
+            self.workbench._refresh_chart_preview(root / "missing_papers.csv")
+            self.assertIn("chart preview is empty", self.workbench.charts_summary_text.get("1.0", tk.END))
+            no_source_csv = root / "papers_no_source.csv"
+            pd.DataFrame([{"title": "A", "inclusion_decision": "include"}]).to_csv(no_source_csv, index=False)
+            self.workbench._refresh_chart_preview(no_source_csv)
+            self.assertIn("No source data available yet.", self.workbench.charts_summary_text.get("1.0", tk.END))
+
+            self.workbench.screening_audit_tree = None
+            self.workbench._refresh_screening_audit(root / "missing_papers.csv")
+            self.workbench.screening_audit_tree = next(
+                widget for widget in _walk_widgets(self.workbench.screening_audit_tab) if widget.winfo_class() == "Treeview"
+            )
+            self.workbench._refresh_screening_audit(root / "missing_papers.csv")
+            self.assertIn("no screening audit", self.workbench.screening_audit_text.get("1.0", tk.END).lower())
+            empty_csv = root / "empty.csv"
+            pd.DataFrame(columns=["title", "inclusion_decision"]).to_csv(empty_csv, index=False)
+            self.workbench._refresh_screening_audit(empty_csv)
+            self.assertIn("contains no rows", self.workbench.screening_audit_text.get("1.0", tk.END))
+            self.workbench._handle_screening_audit_selection(None)
+            self.workbench._render_screening_audit_row("missing")
 
     def test_collection_start_poll_tables_outputs_and_close_branches(self) -> None:
         self.workbench.profile_combo.set("combo-profile")

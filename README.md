@@ -131,9 +131,13 @@ The guided workbench includes:
 - a left-hand page rail so the settings follow the review workflow instead of one long stacked panel
 - a resizable three-pane settings shell, so you can widen the editor or the inspector instead of being stuck with one fixed layout
 - a right-hand inspector with dedicated `Find`, `Quick Edit`, `Guides`, and `Summary` tabs
-- scrollable settings pages and a scrollable quick-edit panel so the window stays usable on smaller screens
+- compact and advanced settings modes so you can collapse or reveal explanatory section text depending on how dense you want the workspace to be
+- scrollable settings pages, a scrollable quick-edit panel, and a scrollable summary inspector so the window stays usable on smaller screens
 - `Show advanced settings` toggle so lower-level runtime options stay out of the way until needed
 - quick-edit controls for the most-used model, threshold, and output settings, without forcing every option onto the main form at once
+- a richer visual pass-chain builder with provider-specific model suggestions, per-pass previews, duplication, ordering, and entry-score gates
+- stronger grouped path configuration for database paths, result folders, and paper PDF folders
+- provider health indicators so you can see which sources or AI backends are ready, disabled, or missing credentials before a run
 - searchable `Handbook` tab
 - hover help and keyboard-focus help for settings, with detailed English explanations that describe the purpose of each flag, what changes when a switch is on or off, and concrete examples for common workflows
 - live `Run Log` tab
@@ -142,6 +146,11 @@ The guided workbench includes:
   - `Included`
   - `Excluded`
   - `Outputs`
+  - `Charts`
+  - `Run History`
+  - `Screening Audit`
+- export preview before the run starts, so you can confirm which files and folders the current settings will produce
+- an artifact browser with summary panes and open-folder actions for generated files
 - `Analyze Stored Results` button to skip discovery and rerun screening/reporting
 - `Force Stop` button for controlled stop requests
 - path pickers for database, results, PDF, cache, and import paths

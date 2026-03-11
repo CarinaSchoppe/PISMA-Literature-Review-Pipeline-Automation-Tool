@@ -106,13 +106,14 @@ class DesktopWorkbenchWorkflowTests(unittest.TestCase):
         tree = next(widget for widget in _walk_widgets(dialog) if widget.winfo_class() == "Treeview")
 
         _find_button(dialog, "Add Pass").invoke()
+        _find_button(dialog, "Duplicate Pass").invoke()
         tree.selection_set("1")
         _find_button(dialog, "Move Up").invoke()
         _find_button(dialog, "Remove Pass").invoke()
         _find_button(dialog, "Apply").invoke()
 
         passes = self.workbench._current_analysis_passes()
-        self.assertEqual(len(passes), 1)
+        self.assertEqual(len(passes), 2)
 
     def test_pass_builder_cancel_and_invalid_update_branch(self) -> None:
         self.workbench._open_pass_builder()
@@ -183,6 +184,20 @@ class DesktopWorkbenchWorkflowTests(unittest.TestCase):
             with patch.object(self.workbench, "_open_path") as open_path:
                 self.workbench._open_selected_output()
                 open_path.assert_called_once()
+            self.assertIn("CSV artifact", self.workbench.artifact_summary_text.get("1.0", tk.END))
+
+            with patch.object(self.workbench, "_open_path") as open_path:
+                self.workbench._open_selected_output_parent()
+                open_path.assert_called_once()
+
+            self.workbench._refresh_chart_preview(csv_path)
+            self.assertTrue(self.workbench.chart_canvas.find_all())
+            self.assertIn("Total screened records", self.workbench.charts_summary_text.get("1.0", tk.END))
+
+            self.workbench._refresh_screening_audit(csv_path)
+            audit_items = self.workbench.screening_audit_tree.get_children()
+            self.assertEqual(len(audit_items), 2)
+            self.assertIn("Title: Paper A", self.workbench.screening_audit_text.get("1.0", tk.END))
 
     def test_load_dataframe_handles_missing_file_and_refresh_results_from_disk(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -293,6 +308,27 @@ class DesktopWorkbenchWorkflowTests(unittest.TestCase):
                 }
             )
         showwarning.assert_called_once()
+
+    def test_run_history_is_written_and_rendered(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            self.workbench.scalar_vars["data_dir"].set(temp_dir)
+            self.workbench._set_text_widget_value(self.workbench.text_widgets["research_topic"], "History topic")
+            self.workbench.scalar_vars["results_dir"].set("results/history")
+            self.workbench.scalar_vars["run_mode"].set("analyze")
+
+            self.workbench._append_run_history(
+                {
+                    "run_status": "completed",
+                    "papers_csv": "results/history/papers.csv",
+                    "included_papers_csv": "results/history/included_papers.csv",
+                }
+            )
+
+            history_items = self.workbench.run_history_tree.get_children()
+            self.assertEqual(len(history_items), 1)
+            self.assertIn("History topic", self.workbench.run_history_text.get("1.0", tk.END))
+            history_file = Path(temp_dir) / "ui_run_history.json"
+            self.assertTrue(history_file.exists())
 
     def test_open_results_dir_and_platform_open_helpers(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -105,6 +105,7 @@ data/*.sqlite
 data/**/*.sqlite
 data/*.sqlite3
 data/**/*.sqlite3
+data/ui_run_history.json
 
 # C extensions
 *.so

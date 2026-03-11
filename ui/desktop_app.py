@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import queue
@@ -11,6 +12,7 @@ import threading
 import textwrap
 import tkinter as tk
 import tkinter.font as tkfont
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from typing import Any
@@ -92,6 +94,8 @@ class HoverTooltip:
 
 class DesktopWorkbench:
     """Tkinter workbench for guided configuration and result inspection."""
+
+    RUN_HISTORY_FILENAME = "ui_run_history.json"
 
     PALETTE = {
         "window_bg": "#edf2f9",
@@ -975,11 +979,29 @@ class DesktopWorkbench:
         self.settings_search_var = tk.StringVar(value="")
         self.quick_destination_var = tk.StringVar(value="")
         self.guide_choice_var = tk.StringVar(value="")
+        self.settings_mode_var = tk.StringVar(value="compact")
         self.settings_search_combo: ttk.Combobox | None = None
         self.quick_destination_combo: ttk.Combobox | None = None
         self.guide_choice_combo: ttk.Combobox | None = None
         self.model_summary_text: scrolledtext.ScrolledText | None = None
         self.output_summary_text: scrolledtext.ScrolledText | None = None
+        self.export_preview_text: scrolledtext.ScrolledText | None = None
+        self.outputs_preview_text: scrolledtext.ScrolledText | None = None
+        self.artifact_summary_text: scrolledtext.ScrolledText | None = None
+        self.charts_summary_text: scrolledtext.ScrolledText | None = None
+        self.run_history_text: scrolledtext.ScrolledText | None = None
+        self.screening_audit_text: scrolledtext.ScrolledText | None = None
+        self.provider_health_tree: ttk.Treeview | None = None
+        self.run_history_tree: ttk.Treeview | None = None
+        self.screening_audit_tree: ttk.Treeview | None = None
+        self.chart_canvas: tk.Canvas | None = None
+        self.outputs_open_parent_button: ttk.Button | None = None
+        self.outputs_refresh_button: ttk.Button | None = None
+        self.settings_page_intro_labels: dict[str, ttk.Label] = {}
+        self.settings_section_summary_labels: dict[str, ttk.Label] = {}
+        self.run_history_entries: list[dict[str, Any]] = []
+        self.artifact_details: dict[str, dict[str, str]] = {}
+        self.screening_audit_rows: dict[str, dict[str, Any]] = {}
         self.active_settings_page_var = tk.StringVar(value="Review Setup")
         self.active_settings_page_description_var = tk.StringVar(
             value=self.SETTINGS_PAGE_DESCRIPTIONS.get("Review Setup", "")
@@ -1003,6 +1025,7 @@ class DesktopWorkbench:
         self._refresh_settings_search_results()
         self._refresh_settings_overview()
         self._refresh_profile_choices()
+        self._refresh_run_history_tab()
         self.root.bind_all("<MouseWheel>", self._on_settings_mousewheel, add="+")
         self.root.bind_all("<Button-4>", self._on_settings_mousewheel, add="+")
         self.root.bind_all("<Button-5>", self._on_settings_mousewheel, add="+")
@@ -1414,6 +1437,27 @@ class DesktopWorkbench:
             self.settings_pages_notebook.select(visible_tabs[0])
         self._handle_settings_page_changed()
 
+    def _apply_settings_mode(self) -> None:
+        """Switch between compact and advanced visual density for the settings pages."""
+
+        advanced_mode = self.settings_mode_var.get() == "advanced"
+        for label in self.settings_page_intro_labels.values():
+            if advanced_mode:
+                label.grid()
+            else:
+                label.grid_remove()
+        for label in self.settings_section_summary_labels.values():
+            if advanced_mode:
+                label.grid()
+            else:
+                label.grid_remove()
+        mode_message = (
+            "Advanced settings mode enabled. Section descriptions remain visible for deeper orientation."
+            if advanced_mode
+            else "Compact settings mode enabled. Non-essential section descriptions are collapsed to keep the layout lighter."
+        )
+        self._set_status(mode_message)
+
     def _build_layout(self) -> None:
         """Construct the top-level toolbar, notebook, and status bar widgets."""
         shell = ttk.Frame(self.root, padding=12, style="TFrame")
@@ -1538,6 +1582,9 @@ class DesktopWorkbench:
         self.included_tab = ttk.Frame(notebook)
         self.excluded_tab = ttk.Frame(notebook)
         self.outputs_tab = ttk.Frame(notebook)
+        self.charts_tab = ttk.Frame(notebook)
+        self.run_history_tab = ttk.Frame(notebook)
+        self.screening_audit_tab = ttk.Frame(notebook)
         notebook.add(self.settings_tab, text="Settings")
         notebook.add(self.handbook_tab, text="Handbook")
         notebook.add(self.log_tab, text="Run Log")
@@ -1545,6 +1592,9 @@ class DesktopWorkbench:
         notebook.add(self.included_tab, text="Included")
         notebook.add(self.excluded_tab, text="Excluded")
         notebook.add(self.outputs_tab, text="Outputs")
+        notebook.add(self.charts_tab, text="Charts")
+        notebook.add(self.run_history_tab, text="Run History")
+        notebook.add(self.screening_audit_tab, text="Screening Audit")
 
         self._build_settings_tab()
         self._build_handbook_tab()
@@ -1553,6 +1603,9 @@ class DesktopWorkbench:
         self._build_table_tab(self.included_tab, "included_papers")
         self._build_table_tab(self.excluded_tab, "excluded_papers")
         self._build_outputs_tab()
+        self._build_charts_tab()
+        self._build_run_history_tab()
+        self._build_screening_audit_tab()
 
     def _build_settings_tab(self) -> None:
         """Render the grouped configuration form used to build a `ResearchConfig`."""
@@ -1655,6 +1708,28 @@ class DesktopWorkbench:
             "over the center pane and scroll normally.",
         )
 
+        settings_mode_frame = ttk.LabelFrame(page_header, text="Settings mode", padding=8, style="Card.TLabelframe")
+        settings_mode_frame.grid(row=3, column=0, sticky="w", pady=(12, 0))
+        ttk.Radiobutton(
+            settings_mode_frame,
+            text="Compact",
+            value="compact",
+            variable=self.settings_mode_var,
+            command=self._apply_settings_mode,
+        ).pack(side="left")
+        ttk.Radiobutton(
+            settings_mode_frame,
+            text="Advanced",
+            value="advanced",
+            variable=self.settings_mode_var,
+            command=self._apply_settings_mode,
+        ).pack(side="left", padx=(10, 0))
+        self._bind_hover_help(
+            settings_mode_frame,
+            "Compact mode keeps only the essential controls and leaves longer explanatory labels collapsed. "
+            "Advanced mode reveals the full helper text for each section so you can inspect every detail without opening the handbook.",
+        )
+
         page_notebook = ttk.Notebook(center_frame, style="Workbench.TNotebook")
         page_notebook.grid(row=1, column=0, sticky="nsew")
         self.settings_pages_notebook = page_notebook
@@ -1678,6 +1753,7 @@ class DesktopWorkbench:
                 style="Muted.TLabel",
             )
             intro.grid(row=0, column=0, sticky="w", pady=(0, 8))
+            self.settings_page_intro_labels[page_name] = intro
             self._bind_hover_help(intro, f"Settings page: {page_name}.")
 
             for row, section_name in enumerate(section_names, start=1):
@@ -1692,6 +1768,7 @@ class DesktopWorkbench:
         self._populate_quick_access_controls()
         self._apply_settings_page_visibility()
         self._handle_settings_page_changed()
+        self._apply_settings_mode()
 
     def _build_settings_navigation(self, parent: ttk.Frame) -> None:
         """Create the left-hand navigation rail used to move between settings pages."""
@@ -1783,6 +1860,7 @@ class DesktopWorkbench:
             justify="left",
         )
         summary_label.grid(row=0, column=0, columnspan=2, sticky="w", padx=4, pady=(0, 8))
+        self.settings_section_summary_labels[section_name] = summary_label
         self._bind_hover_help(summary_label, self.SECTION_HELP_TEXTS.get(section_name, section_name))
 
         for index, field_name in enumerate(field_names, start=1):
@@ -2298,28 +2376,64 @@ class DesktopWorkbench:
         self._bind_hover_help(guide_button, "Open the handbook guide selected in the dropdown above.")
 
         summary_tab.columnconfigure(0, weight=1)
-        summary_tab.rowconfigure(1, weight=1)
-        summary_tab.rowconfigure(3, weight=1)
-        ttk.Label(
+        summary_tab.rowconfigure(0, weight=1)
+        summary_canvas = tk.Canvas(
             summary_tab,
-            text="Use these summaries to confirm which models and output paths will be used before you start a run.",
+            background=self.PALETTE["surface_bg"],
+            highlightthickness=0,
+            borderwidth=0,
+        )
+        summary_scrollbar = ttk.Scrollbar(summary_tab, orient="vertical", command=summary_canvas.yview)
+        summary_canvas.configure(yscrollcommand=summary_scrollbar.set)
+        summary_canvas.grid(row=0, column=0, sticky="nsew")
+        summary_scrollbar.grid(row=0, column=1, sticky="ns")
+        summary_frame = ttk.Frame(summary_canvas, padding=(0, 0, 4, 0), style="Surface.TFrame")
+        summary_frame.columnconfigure(0, weight=1)
+        summary_window = summary_canvas.create_window((0, 0), window=summary_frame, anchor="nw")
+        summary_frame.bind(
+            "<Configure>",
+            lambda _event, panel_canvas=summary_canvas: panel_canvas.configure(scrollregion=panel_canvas.bbox("all")),
+        )
+        summary_canvas.bind(
+            "<Configure>",
+            lambda event, panel_canvas=summary_canvas, window_id=summary_window: panel_canvas.itemconfigure(window_id, width=event.width),
+        )
+        for widget in (summary_tab, summary_canvas, summary_frame):
+            widget.bind("<Enter>", lambda _event, panel_canvas=summary_canvas: self._activate_settings_canvas(panel_canvas), add="+")
+
+        ttk.Label(
+            summary_frame,
+            text="Use these cards to confirm models, provider readiness, paths, and planned exports before starting a run.",
             wraplength=300,
             justify="left",
             style="PageBody.TLabel",
         ).grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        model_frame = ttk.LabelFrame(summary_tab, text="Current Model Setup", padding=8, style="Card.TLabelframe")
+        model_frame = ttk.LabelFrame(summary_frame, text="Current Model Setup", padding=8, style="Card.TLabelframe")
+        provider_frame = ttk.LabelFrame(summary_frame, text="Provider Health", padding=8, style="Card.TLabelframe")
+        output_frame = ttk.LabelFrame(summary_frame, text="Current Output Paths", padding=8, style="Card.TLabelframe")
+        preview_frame = ttk.LabelFrame(summary_frame, text="Export Preview Before Run", padding=8, style="Card.TLabelframe")
         model_frame.grid(row=1, column=0, sticky="nsew", pady=(0, 8))
-        output_frame = ttk.LabelFrame(summary_tab, text="Current Output Paths", padding=8, style="Card.TLabelframe")
-        output_frame.grid(row=3, column=0, sticky="nsew")
-        model_frame.rowconfigure(0, weight=1)
-        output_frame.rowconfigure(0, weight=1)
-        model_frame.columnconfigure(0, weight=1)
-        output_frame.columnconfigure(0, weight=1)
+        provider_frame.grid(row=2, column=0, sticky="nsew", pady=(0, 8))
+        output_frame.grid(row=3, column=0, sticky="nsew", pady=(0, 8))
+        preview_frame.grid(row=4, column=0, sticky="nsew")
+        for panel in (model_frame, provider_frame, output_frame, preview_frame):
+            panel.columnconfigure(0, weight=1)
+            panel.rowconfigure(0, weight=1)
 
         self.model_summary_text = scrolledtext.ScrolledText(model_frame, height=9, wrap="word", state="disabled")
         self.model_summary_text.grid(row=0, column=0, sticky="nsew")
+        self.provider_health_tree = ttk.Treeview(provider_frame, columns=("provider", "status", "note"), show="headings", height=6)
+        self.provider_health_tree.heading("provider", text="Provider")
+        self.provider_health_tree.heading("status", text="Status")
+        self.provider_health_tree.heading("note", text="Reason")
+        self.provider_health_tree.column("provider", width=120, anchor="w")
+        self.provider_health_tree.column("status", width=90, anchor="w")
+        self.provider_health_tree.column("note", width=260, anchor="w")
+        self.provider_health_tree.grid(row=0, column=0, sticky="nsew")
         self.output_summary_text = scrolledtext.ScrolledText(output_frame, height=11, wrap="word", state="disabled")
         self.output_summary_text.grid(row=0, column=0, sticky="nsew")
+        self.export_preview_text = scrolledtext.ScrolledText(preview_frame, height=12, wrap="word", state="disabled")
+        self.export_preview_text.grid(row=0, column=0, sticky="nsew")
 
     def _populate_quick_access_controls(self) -> None:
         """Mirror the most-used settings at the top of the Settings tab for immediate editing."""
@@ -2479,17 +2593,27 @@ class DesktopWorkbench:
         outputs_card.columnconfigure(1, weight=1)
         outputs_card.columnconfigure(2, weight=1)
         outputs_card.columnconfigure(3, weight=1)
+        ttk.Label(
+            outputs_card,
+            text=(
+                "Keep core export toggles here, then use the grouped path bundles below to decide where the database, "
+                "result artifacts, and paper PDFs should live."
+            ),
+            wraplength=300,
+            justify="left",
+            style="PageBody.TLabel",
+        ).grid(row=0, column=0, columnspan=4, sticky="ew", padx=4, pady=(0, 6))
 
         download_widget = ttk.Checkbutton(
             outputs_card,
             text=self.LABELS["download_pdfs"],
             variable=self.scalar_vars["download_pdfs"],
         )
-        download_widget.grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        download_widget.grid(row=1, column=0, sticky="w", padx=4, pady=4)
         self._bind_hover_help(download_widget, self._help_text_for_field("download_pdfs"))
-        add_label(outputs_card, 0, 1, "pdf_download_mode")
+        add_label(outputs_card, 1, 1, "pdf_download_mode")
         pdf_mode_frame = ttk.Frame(outputs_card)
-        pdf_mode_frame.grid(row=0, column=2, columnspan=2, sticky="w", padx=4, pady=4)
+        pdf_mode_frame.grid(row=1, column=2, columnspan=2, sticky="w", padx=4, pady=4)
         for index, option in enumerate(self.RADIO_FIELDS["pdf_download_mode"]):
             button = ttk.Radiobutton(
                 pdf_mode_frame,
@@ -2501,30 +2625,37 @@ class DesktopWorkbench:
             self._bind_hover_help(button, self._help_text_for_field("pdf_download_mode"))
 
         csv_widget = ttk.Checkbutton(outputs_card, text=self.LABELS["output_csv"], variable=self.scalar_vars["output_csv"])
-        csv_widget.grid(row=1, column=0, sticky="w", padx=4, pady=4)
+        csv_widget.grid(row=2, column=0, sticky="w", padx=4, pady=4)
         sqlite_widget = ttk.Checkbutton(
             outputs_card,
             text=self.LABELS["output_sqlite_exports"],
             variable=self.scalar_vars["output_sqlite_exports"],
         )
-        sqlite_widget.grid(row=1, column=1, sticky="w", padx=4, pady=4)
+        sqlite_widget.grid(row=2, column=1, sticky="w", padx=4, pady=4)
         json_widget = ttk.Checkbutton(outputs_card, text=self.LABELS["output_json"], variable=self.scalar_vars["output_json"])
-        json_widget.grid(row=1, column=2, sticky="w", padx=4, pady=4)
+        json_widget.grid(row=2, column=2, sticky="w", padx=4, pady=4)
         markdown_widget = ttk.Checkbutton(
             outputs_card,
             text=self.LABELS["output_markdown"],
             variable=self.scalar_vars["output_markdown"],
         )
-        markdown_widget.grid(row=1, column=3, sticky="w", padx=4, pady=4)
+        markdown_widget.grid(row=2, column=3, sticky="w", padx=4, pady=4)
         self._bind_hover_help(csv_widget, self._help_text_for_field("output_csv"))
         self._bind_hover_help(sqlite_widget, self._help_text_for_field("output_sqlite_exports"))
         self._bind_hover_help(json_widget, self._help_text_for_field("output_json"))
         self._bind_hover_help(markdown_widget, self._help_text_for_field("output_markdown"))
 
-        add_path_control(outputs_card, 2, "database_path")
-        add_path_control(outputs_card, 3, "results_dir")
-        add_path_control(outputs_card, 4, "papers_dir")
-        add_path_control(outputs_card, 5, "relevant_pdfs_dir")
+        storage_bundle = ttk.LabelFrame(outputs_card, text="Core storage paths", padding=8, style="Card.TLabelframe")
+        storage_bundle.grid(row=3, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        storage_bundle.columnconfigure(1, weight=1)
+        add_path_control(storage_bundle, 0, "database_path")
+        add_path_control(storage_bundle, 1, "results_dir")
+
+        paper_bundle = ttk.LabelFrame(outputs_card, text="Paper file paths", padding=8, style="Card.TLabelframe")
+        paper_bundle.grid(row=4, column=0, columnspan=4, sticky="ew", pady=(8, 0))
+        paper_bundle.columnconfigure(1, weight=1)
+        add_path_control(paper_bundle, 0, "papers_dir")
+        add_path_control(paper_bundle, 1, "relevant_pdfs_dir")
 
         frame.columnconfigure(0, weight=1)
 
@@ -2720,7 +2851,7 @@ class DesktopWorkbench:
         self._refresh_settings_overview()
 
     def _refresh_settings_overview(self) -> None:
-        """Update the quick-access summaries for model configuration and outputs."""
+        """Update the quick-access summaries, export preview, and provider health indicators."""
 
         values = self._collect_form_values()
         results_dir = Path(str(values.get("results_dir", "results") or "results"))
@@ -2753,6 +2884,18 @@ class DesktopWorkbench:
                 if entry.get("min_input_score") not in {None, ''}:
                     line += f" | start if previous >= {int(round(float(entry['min_input_score'])))}"
                 model_lines.append(line)
+        path_groups = [
+            "Core storage:",
+            f"  Results directory -> {results_dir}",
+            f"  Main SQLite database -> {values.get('database_path')}",
+            "Paper file storage:",
+            f"  Main paper PDFs -> {papers_dir}",
+            f"  Relevant-only paper PDFs -> {relevant_dir}",
+            "Import sources:",
+            f"  Manual import -> {values.get('manual_source_path') or '(not set)'}",
+            f"  Google Scholar import -> {values.get('google_scholar_import_path') or '(not set)'}",
+            f"  ResearchGate import -> {values.get('researchgate_import_path') or '(not set)'}",
+        ]
         output_lines = [
             f"Main SQLite DB: {values.get('database_path')}",
             f"CSV exports: {'on' if values.get('output_csv') else 'off'} -> {results_dir / 'papers.csv'}",
@@ -2772,9 +2915,130 @@ class DesktopWorkbench:
         else:
             output_lines.append("Relevant PDFs are not split into a separate folder in 'all' mode.")
         output_lines.append(f"Results folder: {results_dir}")
+        output_lines.append("")
+        output_lines.extend(path_groups)
 
         self._write_summary_widget(self.model_summary_text, "\n".join(model_lines))
         self._write_summary_widget(self.output_summary_text, "\n".join(output_lines))
+        preview_text = self._build_export_preview_text(values)
+        self._write_summary_widget(self.export_preview_text, preview_text)
+        self._write_summary_widget(self.outputs_preview_text, preview_text)
+        self._refresh_provider_health(values)
+
+    def _build_export_preview_text(self, values: dict[str, Any]) -> str:
+        """Describe the artifact set that the current settings would produce if the run started now."""
+
+        results_dir = Path(str(values.get("results_dir", "results") or "results"))
+        papers_dir = Path(str(values.get("papers_dir", "papers") or "papers"))
+        relevant_dir_raw = str(values.get("relevant_pdfs_dir", "") or "").strip()
+        relevant_dir = Path(relevant_dir_raw) if relevant_dir_raw else papers_dir / "relevant"
+        planned_artifacts = [
+            ("papers.csv", values.get("output_csv"), results_dir / "papers.csv", "Merged and screened paper table."),
+            ("included_papers.csv", values.get("output_csv"), results_dir / "included_papers.csv", "Accepted shortlist with reasons."),
+            ("excluded_papers.csv", values.get("output_csv"), results_dir / "excluded_papers.csv", "Excluded records with reasons."),
+            ("top_papers.json", values.get("output_json"), results_dir / "top_papers.json", "Structured ranking and shortlist JSON."),
+            ("review_summary.md", values.get("output_markdown"), results_dir / "review_summary.md", "Narrative review summary."),
+            ("included_papers.db", values.get("output_sqlite_exports"), results_dir / "included_papers.db", "Included-paper SQLite export."),
+            ("excluded_papers.db", values.get("output_sqlite_exports"), results_dir / "excluded_papers.db", "Excluded-paper SQLite export."),
+            ("prisma_flow.json", values.get("output_json"), results_dir / "prisma_flow.json", "Machine-readable PRISMA flow summary."),
+            ("citation_graph.json", values.get("output_json"), results_dir / "citation_graph.json", "Citation graph export when available."),
+        ]
+        lines = [
+            "This preview is generated from the live UI settings before the run starts.",
+            f"Run mode: {values.get('run_mode')}",
+            f"Results directory: {results_dir}",
+            "",
+            "Planned artifacts:",
+        ]
+        for label, enabled, target, description in planned_artifacts:
+            state = "enabled" if enabled else "disabled"
+            lines.append(f"- {label}: {state} -> {target}")
+            lines.append(f"  {description}")
+        lines.append("")
+        if values.get("download_pdfs"):
+            lines.append(f"Paper PDFs: enabled -> {papers_dir}")
+            if str(values.get("pdf_download_mode", "all")) == "relevant_only":
+                lines.append(f"Relevant-only PDF folder: {relevant_dir}")
+            else:
+                lines.append("All available PDFs stay in the main paper PDF folder.")
+        else:
+            lines.append("Paper PDFs: disabled")
+        return "\n".join(lines)
+
+    def _refresh_provider_health(self, values: dict[str, Any]) -> None:
+        """Update the provider-health summary based on enabled sources, credentials, and model selection."""
+
+        if self.provider_health_tree is None:
+            return
+        for item in self.provider_health_tree.get_children():
+            self.provider_health_tree.delete(item)
+
+        provider_rows = [
+            ("OpenAlex", bool(values.get("openalex_enabled")), True, "OpenAlex source enabled."),
+            (
+                "Semantic Scholar",
+                bool(values.get("semantic_scholar_enabled")),
+                bool(str(values.get("semantic_scholar_api_key", "")).strip()),
+                "API key improves rate limits.",
+            ),
+            ("Crossref", bool(values.get("crossref_enabled")), bool(str(values.get("crossref_mailto", "")).strip()), "Mailto improves etiquette and attribution."),
+            (
+                "Springer",
+                bool(values.get("springer_enabled")),
+                bool(str(values.get("springer_api_key", "")).strip()),
+                "Springer API requires a valid key.",
+            ),
+            ("arXiv", bool(values.get("arxiv_enabled")), True, "Public API source."),
+            ("PubMed", bool(values.get("include_pubmed")), True, "Optional biomedical source."),
+            (
+                "Unpaywall",
+                bool(values.get("download_pdfs")),
+                bool(str(values.get("unpaywall_email", "")).strip()),
+                "Email improves PDF retrieval etiquette.",
+            ),
+            (
+                "OpenAI",
+                str(values.get("llm_provider")) in {"openai_compatible", "auto"},
+                bool(str(values.get("openai_api_key", "")).strip()),
+                f"Model: {values.get('openai_model') or '(not set)'}",
+            ),
+            (
+                "Gemini",
+                str(values.get("llm_provider")) == "gemini" or any(
+                    entry.get("provider") == "gemini" for entry in self._current_analysis_passes()
+                ),
+                bool(str(values.get("gemini_api_key", "")).strip()),
+                f"Model: {values.get('gemini_model') or '(not set)'}",
+            ),
+            (
+                "Ollama",
+                str(values.get("llm_provider")) == "ollama" or any(
+                    entry.get("provider") == "ollama" for entry in self._current_analysis_passes()
+                ),
+                True,
+                f"Model: {values.get('ollama_model') or '(not set)'}",
+            ),
+            (
+                "Hugging Face",
+                str(values.get("llm_provider")) == "huggingface_local" or any(
+                    entry.get("provider") == "huggingface_local" for entry in self._current_analysis_passes()
+                ),
+                True,
+                f"Model: {values.get('huggingface_model') or '(not set)'}",
+            ),
+        ]
+
+        for provider, enabled, credential_ready, note in provider_rows:
+            if not enabled:
+                status = "Disabled"
+                reason = "Not active for the current run."
+            elif credential_ready:
+                status = "Ready"
+                reason = note
+            else:
+                status = "Attention"
+                reason = note
+            self.provider_health_tree.insert("", tk.END, values=(provider, status, reason))
 
     def _write_summary_widget(self, widget: scrolledtext.ScrolledText | None, text: str) -> None:
         """Render summary text into a read-only scrolled text widget."""
@@ -3050,13 +3314,38 @@ class DesktopWorkbench:
 
         dialog = tk.Toplevel(self.root)
         dialog.title("Analysis Pass Builder")
-        dialog.geometry("900x520")
+        dialog.geometry("1080x640")
         dialog.transient(self.root)
+        dialog.columnconfigure(0, weight=1)
+        dialog.rowconfigure(1, weight=1)
 
-        left = ttk.Frame(dialog, padding=10)
-        left.pack(side="left", fill="y")
-        right = ttk.Frame(dialog, padding=10)
-        right.pack(side="left", fill="both", expand=True)
+        header = ttk.Frame(dialog, padding=12, style="PageHero.TFrame")
+        header.grid(row=0, column=0, sticky="ew")
+        header.columnconfigure(0, weight=1)
+        ttk.Label(header, text="Visual pass-chain builder", style="PageTitle.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(
+            header,
+            text=(
+                "Use this builder to define one or more screening passes. Each pass can use a different provider, "
+                "decision mode, threshold, model override, and entry gate based on the previous pass."
+            ),
+            wraplength=860,
+            justify="left",
+            style="PageBody.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(6, 0))
+
+        shell = ttk.Panedwindow(dialog, orient="horizontal")
+        shell.grid(row=1, column=0, sticky="nsew")
+        left = ttk.Frame(shell, padding=10, style="Surface.TFrame")
+        right = ttk.Frame(shell, padding=10, style="Surface.TFrame")
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(1, weight=1)
+        left.rowconfigure(3, weight=1)
+        right.columnconfigure(1, weight=1)
+        shell.add(left, weight=2)
+        shell.add(right, weight=3)
+
+        ttk.Label(left, text="Pass chain overview", style="PageTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
 
         tree = ttk.Treeview(
             left,
@@ -3075,7 +3364,9 @@ class DesktopWorkbench:
         ):
             tree.heading(column, text=title)
             tree.column(column, width=width, anchor="w")
-        tree.pack(fill="y", expand=False)
+        tree.grid(row=1, column=0, sticky="nsew")
+        chain_summary = scrolledtext.ScrolledText(left, height=10, wrap="word", state="disabled")
+        chain_summary.grid(row=3, column=0, sticky="nsew", pady=(8, 0))
 
         form_vars = {
             "name": tk.StringVar(value="fast"),
@@ -3090,6 +3381,16 @@ class DesktopWorkbench:
         threshold_label = ttk.Label(right, width=8, anchor="e")
         margin_label = ttk.Label(right, width=8, anchor="e")
         min_input_score_label = ttk.Label(right, width=8, anchor="e")
+        provider_hint = ttk.Label(right, wraplength=380, justify="left", style="PageBody.TLabel")
+        pass_preview = scrolledtext.ScrolledText(right, height=9, wrap="word", state="disabled")
+
+        provider_models = {
+            "heuristic": [""],
+            "openai_compatible": self.COMBOBOX_FIELDS["openai_model"],
+            "gemini": self.COMBOBOX_FIELDS["gemini_model"],
+            "ollama": self.COMBOBOX_FIELDS["ollama_model"],
+            "huggingface_local": self.COMBOBOX_FIELDS["huggingface_model"],
+        }
 
         def refresh_tree() -> None:
             for item in tree.get_children():
@@ -3113,6 +3414,20 @@ class DesktopWorkbench:
                         ),
                     ],
                 )
+            chain_lines = []
+            for index, entry in enumerate(entries, start=1):
+                line = (
+                    f"{index}. {entry['name']} uses {entry['provider']} at threshold {int(round(float(entry['threshold'])))} "
+                    f"in {entry['decision_mode']} mode."
+                )
+                if entry.get("model_name"):
+                    line += f" Model override: {entry['model_name']}."
+                if entry.get("min_input_score") not in {None, ""}:
+                    line += f" Starts only if the previous pass scored at least {int(round(float(entry['min_input_score'])))}."
+                else:
+                    line += " Starts for every paper that reaches this stage."
+                chain_lines.append(line)
+            self._write_summary_widget(chain_summary, "\n\n".join(chain_lines) if chain_lines else "No passes are currently defined.")
             if entries:
                 selected = tree.selection() or (tree.get_children()[0],)
                 tree.selection_set(selected[0])
@@ -3126,6 +3441,46 @@ class DesktopWorkbench:
                 min_input_score_label.configure(text=str(int(round(form_vars["min_input_score"].get()))))
             else:
                 min_input_score_label.configure(text="always")
+            refresh_pass_preview()
+
+        def refresh_provider_hint() -> None:
+            provider = form_vars["provider"].get().strip() or "heuristic"
+            if provider == "heuristic":
+                hint = "Heuristic uses local rule-based scoring. Model override is ignored for this pass."
+            elif provider == "openai_compatible":
+                hint = "OpenAI-compatible expects a reachable API base URL and key in the main settings."
+            elif provider == "gemini":
+                hint = "Gemini expects a valid Gemini API key in Connections and Keys."
+            elif provider == "ollama":
+                hint = "Ollama uses a locally running server. Model override can point to any installed Ollama model."
+            else:
+                hint = "Hugging Face local runs a local Transformers model. Larger overrides need more RAM or GPU memory."
+            provider_hint.configure(text=hint)
+
+        def refresh_model_options() -> None:
+            provider = form_vars["provider"].get().strip() or "heuristic"
+            model_widget.configure(values=provider_models.get(provider, [""]))
+            refresh_provider_hint()
+
+        def refresh_pass_preview() -> None:
+            gate_text = (
+                f"Run only if the previous pass scored at least {int(round(form_vars['min_input_score'].get()))}%."
+                if form_vars["min_input_score_enabled"].get()
+                else "Run regardless of previous-pass score."
+            )
+            model_name = form_vars["model_name"].get().strip() or "(provider default)"
+            preview = "\n".join(
+                [
+                    f"Name: {form_vars['name'].get().strip() or '(unnamed pass)'}",
+                    f"Provider: {form_vars['provider'].get().strip()}",
+                    f"Decision mode: {form_vars['decision_mode'].get().strip()}",
+                    f"Threshold: {int(round(form_vars['threshold'].get()))}%",
+                    f"Maybe margin: {int(round(form_vars['margin'].get()))}%",
+                    f"Model override: {model_name}",
+                    f"Entry gate: {gate_text}",
+                ]
+            )
+            self._write_summary_widget(pass_preview, preview)
 
         def load_selected(_event: Any | None = None) -> None:
             selection = tree.selection()
@@ -3145,7 +3500,9 @@ class DesktopWorkbench:
             else:
                 form_vars["min_input_score_enabled"].set(True)
                 form_vars["min_input_score"].set(float(min_input_score))
+            refresh_model_options()
             sync_labels()
+            refresh_pass_preview()
 
         def save_current() -> None:
             name = form_vars["name"].get().strip()
@@ -3191,6 +3548,17 @@ class DesktopWorkbench:
             tree.selection_set(str(len(entries) - 1))
             load_selected()
 
+        def duplicate_pass() -> None:
+            selection = tree.selection()
+            if not selection:
+                return
+            current = dict(entries[int(selection[0])])
+            current["name"] = f"{current['name']}_copy"
+            entries.insert(int(selection[0]) + 1, current)
+            refresh_tree()
+            tree.selection_set(str(int(selection[0]) + 1))
+            load_selected()
+
         def remove_pass() -> None:
             selection = tree.selection()
             if not selection:
@@ -3213,63 +3581,74 @@ class DesktopWorkbench:
 
         tree.bind("<<TreeviewSelect>>", load_selected)
 
-        ttk.Label(right, text="Pass name").grid(row=0, column=0, sticky="w", pady=4)
-        ttk.Entry(right, textvariable=form_vars["name"]).grid(row=0, column=1, sticky="ew", pady=4)
-        ttk.Label(right, text="Provider").grid(row=1, column=0, sticky="w", pady=4)
-        ttk.Combobox(
+        ttk.Label(right, text="Selected pass editor", style="PageTitle.TLabel").grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        provider_hint.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        ttk.Label(right, text="Pass name").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Entry(right, textvariable=form_vars["name"]).grid(row=2, column=1, sticky="ew", pady=4)
+        ttk.Label(right, text="Provider").grid(row=3, column=0, sticky="w", pady=4)
+        provider_widget = ttk.Combobox(
             right,
             textvariable=form_vars["provider"],
             values=["heuristic", "openai_compatible", "gemini", "ollama", "huggingface_local"],
             state="readonly",
-        ).grid(row=1, column=1, sticky="ew", pady=4)
-        ttk.Label(right, text="Decision mode").grid(row=2, column=0, sticky="w", pady=4)
+        )
+        provider_widget.grid(row=3, column=1, sticky="ew", pady=4)
+        provider_widget.bind("<<ComboboxSelected>>", lambda _event: (refresh_model_options(), refresh_pass_preview()))
+        ttk.Label(right, text="Decision mode").grid(row=4, column=0, sticky="w", pady=4)
         ttk.Combobox(
             right,
             textvariable=form_vars["decision_mode"],
             values=["strict", "triage"],
             state="readonly",
-        ).grid(row=2, column=1, sticky="ew", pady=4)
-        ttk.Label(right, text="Threshold (%)").grid(row=3, column=0, sticky="w", pady=4)
+        ).grid(row=4, column=1, sticky="ew", pady=4)
+        ttk.Label(right, text="Threshold (%)").grid(row=5, column=0, sticky="w", pady=4)
         threshold_scale = ttk.Scale(right, from_=0, to=100, variable=form_vars["threshold"], command=lambda _value: sync_labels())
-        threshold_scale.grid(row=3, column=1, sticky="ew", pady=4)
-        threshold_label.grid(row=3, column=2, sticky="e", padx=(8, 0))
-        ttk.Label(right, text="Maybe margin (%)").grid(row=4, column=0, sticky="w", pady=4)
+        threshold_scale.grid(row=5, column=1, sticky="ew", pady=4)
+        threshold_label.grid(row=5, column=2, sticky="e", padx=(8, 0))
+        ttk.Label(right, text="Maybe margin (%)").grid(row=6, column=0, sticky="w", pady=4)
         margin_scale = ttk.Scale(right, from_=0, to=100, variable=form_vars["margin"], command=lambda _value: sync_labels())
-        margin_scale.grid(row=4, column=1, sticky="ew", pady=4)
-        margin_label.grid(row=4, column=2, sticky="e", padx=(8, 0))
-        ttk.Label(right, text="Model override").grid(row=5, column=0, sticky="w", pady=4)
-        ttk.Entry(right, textvariable=form_vars["model_name"]).grid(row=5, column=1, columnspan=2, sticky="ew", pady=4)
+        margin_scale.grid(row=6, column=1, sticky="ew", pady=4)
+        margin_label.grid(row=6, column=2, sticky="e", padx=(8, 0))
+        ttk.Label(right, text="Model override").grid(row=7, column=0, sticky="w", pady=4)
+        model_widget = ttk.Combobox(right, textvariable=form_vars["model_name"], state="normal")
+        model_widget.grid(row=7, column=1, columnspan=2, sticky="ew", pady=4)
         min_gate_frame = ttk.Frame(right)
-        min_gate_frame.grid(row=6, column=0, columnspan=3, sticky="ew", pady=4)
+        min_gate_frame.grid(row=8, column=0, columnspan=3, sticky="ew", pady=4)
         ttk.Checkbutton(
             min_gate_frame,
             text="Only run this pass if the previous pass scored at least",
             variable=form_vars["min_input_score_enabled"],
-            command=sync_labels,
+            command=lambda: (sync_labels(), refresh_pass_preview()),
         ).pack(side="left")
         min_gate_scale = ttk.Scale(
             right,
             from_=0,
             to=100,
             variable=form_vars["min_input_score"],
-            command=lambda _value: sync_labels(),
+            command=lambda _value: (sync_labels(), refresh_pass_preview()),
         )
-        min_gate_scale.grid(row=7, column=1, sticky="ew", pady=4)
-        ttk.Label(right, text="Entry score gate (%)").grid(row=7, column=0, sticky="w", pady=4)
-        min_input_score_label.grid(row=7, column=2, sticky="e", padx=(8, 0))
+        min_gate_scale.grid(row=9, column=1, sticky="ew", pady=4)
+        ttk.Label(right, text="Entry score gate (%)").grid(row=9, column=0, sticky="w", pady=4)
+        min_input_score_label.grid(row=9, column=2, sticky="e", padx=(8, 0))
+        ttk.Label(right, text="Pass preview").grid(row=10, column=0, sticky="nw", pady=(10, 4))
+        pass_preview.grid(row=10, column=1, columnspan=2, sticky="nsew", pady=(10, 4))
         right.columnconfigure(1, weight=1)
+        right.rowconfigure(10, weight=1)
         sync_labels()
+        refresh_model_options()
+        refresh_pass_preview()
 
         button_bar = ttk.Frame(right)
-        button_bar.grid(row=8, column=0, columnspan=3, sticky="w", pady=(12, 0))
+        button_bar.grid(row=11, column=0, columnspan=3, sticky="w", pady=(12, 0))
         ttk.Button(button_bar, text="Add Pass", command=add_pass).pack(side="left")
         ttk.Button(button_bar, text="Update Pass", command=save_current).pack(side="left", padx=(6, 0))
+        ttk.Button(button_bar, text="Duplicate Pass", command=duplicate_pass).pack(side="left", padx=(6, 0))
         ttk.Button(button_bar, text="Remove Pass", command=remove_pass).pack(side="left", padx=(6, 0))
         ttk.Button(button_bar, text="Move Up", command=lambda: move(-1)).pack(side="left", padx=(6, 0))
         ttk.Button(button_bar, text="Move Down", command=lambda: move(1)).pack(side="left", padx=(6, 0))
 
         footer = ttk.Frame(right)
-        footer.grid(row=9, column=0, columnspan=3, sticky="e", pady=(16, 0))
+        footer.grid(row=12, column=0, columnspan=3, sticky="e", pady=(16, 0))
         ttk.Button(footer, text="Cancel", command=dialog.destroy).pack(side="right")
         ttk.Button(
             footer,
@@ -3314,19 +3693,176 @@ class DesktopWorkbench:
         self.table_frames[key] = container
 
     def _build_outputs_tab(self) -> None:
-        """Create the artifact list with open-on-click convenience actions."""
+        """Create a richer artifact browser with export preview, summaries, and open actions."""
 
-        container = ttk.Frame(self.outputs_tab, padding=8)
+        container = ttk.Frame(self.outputs_tab, padding=8, style="Surface.TFrame")
         container.pack(fill="both", expand=True)
-        self.outputs_tree = ttk.Treeview(container, columns=("label", "path"), show="headings")
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(1, weight=1)
+
+        preview_frame = ttk.LabelFrame(container, text="Planned exports", padding=8, style="Card.TLabelframe")
+        preview_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        preview_frame.columnconfigure(0, weight=1)
+        ttk.Label(
+            preview_frame,
+            text="Review the predicted export set before you run. This preview updates from the current settings immediately.",
+            wraplength=1000,
+            justify="left",
+            style="PageBody.TLabel",
+        ).grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        self.outputs_preview_text = scrolledtext.ScrolledText(preview_frame, height=8, wrap="word", state="disabled")
+        self.outputs_preview_text.grid(row=1, column=0, sticky="nsew")
+
+        browser_shell = ttk.Panedwindow(container, orient="horizontal")
+        browser_shell.grid(row=1, column=0, sticky="nsew")
+
+        left = ttk.Frame(browser_shell, padding=8, style="Surface.TFrame")
+        right = ttk.Frame(browser_shell, padding=8, style="Surface.TFrame")
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(1, weight=1)
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(1, weight=1)
+        browser_shell.add(left, weight=3)
+        browser_shell.add(right, weight=2)
+
+        ttk.Label(
+            left,
+            text="Artifact browser",
+            style="PageTitle.TLabel",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 6))
+        self.outputs_tree = ttk.Treeview(left, columns=("label", "path"), show="headings")
         self.outputs_tree.heading("label", text="Artifact")
         self.outputs_tree.heading("path", text="Path")
-        self.outputs_tree.column("label", width=180, anchor="w")
-        self.outputs_tree.column("path", width=950, anchor="w")
-        self.outputs_tree.pack(fill="both", expand=True)
-        button_bar = ttk.Frame(container)
-        button_bar.pack(fill="x", pady=(8, 0))
+        self.outputs_tree.column("label", width=220, anchor="w")
+        self.outputs_tree.column("path", width=760, anchor="w")
+        self.outputs_tree.grid(row=1, column=0, sticky="nsew")
+        self.outputs_tree.bind("<<TreeviewSelect>>", self._handle_output_selection)
+
+        button_bar = ttk.Frame(left, style="Surface.TFrame")
+        button_bar.grid(row=2, column=0, sticky="w", pady=(8, 0))
         ttk.Button(button_bar, text="Open Selected", command=self._open_selected_output).pack(side="left")
+        self.outputs_open_parent_button = ttk.Button(
+            button_bar,
+            text="Open Parent Folder",
+            command=self._open_selected_output_parent,
+            style="Secondary.TButton",
+        )
+        self.outputs_open_parent_button.pack(side="left", padx=(6, 0))
+        self.outputs_refresh_button = ttk.Button(
+            button_bar,
+            text="Refresh Browser",
+            command=self._refresh_results_from_disk,
+            style="Secondary.TButton",
+        )
+        self.outputs_refresh_button.pack(side="left", padx=(6, 0))
+
+        ttk.Label(
+            right,
+            text="Artifact summary",
+            style="PageTitle.TLabel",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 6))
+        self.artifact_summary_text = scrolledtext.ScrolledText(right, height=18, wrap="word", state="disabled")
+        self.artifact_summary_text.grid(row=1, column=0, sticky="nsew")
+
+    def _build_charts_tab(self) -> None:
+        """Create a lightweight chart preview for post-run counts and distributions."""
+
+        container = ttk.Frame(self.charts_tab, padding=8, style="Surface.TFrame")
+        container.pack(fill="both", expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(1, weight=1)
+        container.rowconfigure(2, weight=0)
+        ttk.Label(
+            container,
+            text="Chart preview",
+            style="PageTitle.TLabel",
+        ).grid(row=0, column=0, sticky="w", pady=(0, 8))
+        self.chart_canvas = tk.Canvas(
+            container,
+            background=self.PALETTE["surface_bg"],
+            highlightthickness=1,
+            highlightbackground=self.PALETTE["border_strong"],
+            height=320,
+        )
+        self.chart_canvas.grid(row=1, column=0, sticky="nsew")
+        summary_frame = ttk.LabelFrame(container, text="Chart notes", padding=8, style="Card.TLabelframe")
+        summary_frame.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        summary_frame.columnconfigure(0, weight=1)
+        self.charts_summary_text = scrolledtext.ScrolledText(summary_frame, height=8, wrap="word", state="disabled")
+        self.charts_summary_text.grid(row=0, column=0, sticky="nsew")
+        self._write_summary_widget(self.charts_summary_text, "No chart data is available yet. Start a run or refresh a results directory.")
+
+    def _build_run_history_tab(self) -> None:
+        """Create a run-history browser backed by a lightweight JSON file."""
+
+        container = ttk.Frame(self.run_history_tab, padding=8, style="Surface.TFrame")
+        container.pack(fill="both", expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(0, weight=1)
+        shell = ttk.Panedwindow(container, orient="horizontal")
+        shell.grid(row=0, column=0, sticky="nsew")
+        left = ttk.Frame(shell, padding=8, style="Surface.TFrame")
+        right = ttk.Frame(shell, padding=8, style="Surface.TFrame")
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(1, weight=1)
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(1, weight=1)
+        shell.add(left, weight=2)
+        shell.add(right, weight=3)
+        ttk.Label(left, text="Run history", style="PageTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 6))
+        self.run_history_tree = ttk.Treeview(left, columns=("time", "status", "topic"), show="headings")
+        self.run_history_tree.heading("time", text="Timestamp")
+        self.run_history_tree.heading("status", text="Status")
+        self.run_history_tree.heading("topic", text="Topic")
+        self.run_history_tree.column("time", width=170, anchor="w")
+        self.run_history_tree.column("status", width=120, anchor="w")
+        self.run_history_tree.column("topic", width=360, anchor="w")
+        self.run_history_tree.grid(row=1, column=0, sticky="nsew")
+        self.run_history_tree.bind("<<TreeviewSelect>>", self._handle_run_history_selection)
+        ttk.Label(right, text="Run details", style="PageTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 6))
+        self.run_history_text = scrolledtext.ScrolledText(right, height=18, wrap="word", state="disabled")
+        self.run_history_text.grid(row=1, column=0, sticky="nsew")
+
+    def _build_screening_audit_tab(self) -> None:
+        """Create a tab that exposes screening decisions, reasons, and extracted passages."""
+
+        container = ttk.Frame(self.screening_audit_tab, padding=8, style="Surface.TFrame")
+        container.pack(fill="both", expand=True)
+        container.columnconfigure(0, weight=1)
+        container.rowconfigure(0, weight=1)
+        shell = ttk.Panedwindow(container, orient="horizontal")
+        shell.grid(row=0, column=0, sticky="nsew")
+        left = ttk.Frame(shell, padding=8, style="Surface.TFrame")
+        right = ttk.Frame(shell, padding=8, style="Surface.TFrame")
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(1, weight=1)
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(1, weight=1)
+        shell.add(left, weight=3)
+        shell.add(right, weight=2)
+        ttk.Label(left, text="Screening audit", style="PageTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 6))
+        self.screening_audit_tree = ttk.Treeview(
+            left,
+            columns=("title", "decision", "score", "source"),
+            show="headings",
+        )
+        self.screening_audit_tree.heading("title", text="Title")
+        self.screening_audit_tree.heading("decision", text="Decision")
+        self.screening_audit_tree.heading("score", text="Score")
+        self.screening_audit_tree.heading("source", text="Source")
+        self.screening_audit_tree.column("title", width=460, anchor="w")
+        self.screening_audit_tree.column("decision", width=110, anchor="w")
+        self.screening_audit_tree.column("score", width=70, anchor="e")
+        self.screening_audit_tree.column("source", width=120, anchor="w")
+        self.screening_audit_tree.grid(row=1, column=0, sticky="nsew")
+        self.screening_audit_tree.bind("<<TreeviewSelect>>", self._handle_screening_audit_selection)
+        ttk.Label(right, text="Decision details", style="PageTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 6))
+        self.screening_audit_text = scrolledtext.ScrolledText(right, height=18, wrap="word", state="disabled")
+        self.screening_audit_text.grid(row=1, column=0, sticky="nsew")
+        self._write_summary_widget(
+            self.screening_audit_text,
+            "No screening audit is available yet. Start a run or refresh a results directory to inspect keep/exclude reasons.",
+        )
 
     def _apply_form_values(self, values: dict[str, Any]) -> None:
         """Populate the visible form controls from a flat dictionary of values."""
@@ -3493,6 +4029,7 @@ class DesktopWorkbench:
                 elif message_type == "error":
                     self._set_status(f"Run failed: {payload}")
                     self._append_log(f"ERROR | {payload}")
+                    self._append_run_history({"run_status": "error", "run_error": str(payload)})
                     messagebox.showerror("Run failed", str(payload))
         except queue.Empty:
             pass
@@ -3526,22 +4063,32 @@ class DesktopWorkbench:
             messagebox.showwarning("Run stopped", run_error)
         elif status != "completed" and run_error:
             messagebox.showerror(f"Run status: {status}", run_error)
-        self._load_dataframe_into_tree("all_papers", Path(str(result.get("papers_csv", config.results_dir / "papers.csv"))))
-        self._load_dataframe_into_tree("included_papers", Path(str(result.get("included_papers_csv", config.results_dir / "included_papers.csv"))))
-        self._load_dataframe_into_tree("excluded_papers", Path(str(result.get("excluded_papers_csv", config.results_dir / "excluded_papers.csv"))))
+        papers_path = Path(str(result.get("papers_csv", config.results_dir / "papers.csv")))
+        included_path = Path(str(result.get("included_papers_csv", config.results_dir / "included_papers.csv")))
+        excluded_path = Path(str(result.get("excluded_papers_csv", config.results_dir / "excluded_papers.csv")))
+        self._load_dataframe_into_tree("all_papers", papers_path)
+        self._load_dataframe_into_tree("included_papers", included_path)
+        self._load_dataframe_into_tree("excluded_papers", excluded_path)
         self._load_outputs(result)
+        self._refresh_chart_preview(papers_path)
+        self._refresh_screening_audit(papers_path)
+        self._append_run_history(result)
 
     def _refresh_results_from_disk(self) -> None:
         """Reload CSV artifacts from disk without rerunning the pipeline."""
 
         values = self._collect_form_values()
         config = form_values_to_config(values)
-        self._load_dataframe_into_tree("all_papers", config.results_dir / "papers.csv")
+        papers_path = config.results_dir / "papers.csv"
+        self._load_dataframe_into_tree("all_papers", papers_path)
         self._load_dataframe_into_tree("included_papers", config.results_dir / "included_papers.csv")
         self._load_dataframe_into_tree("excluded_papers", config.results_dir / "excluded_papers.csv")
         if not self.current_result:
             self.current_result = {"results_dir": str(config.results_dir)}
         self._load_outputs(self.current_result)
+        self._refresh_chart_preview(papers_path)
+        self._refresh_screening_audit(papers_path)
+        self._refresh_run_history_tab()
         self._set_status(f"Reloaded results from {config.results_dir}")
 
     def _load_dataframe_into_tree(self, key: str, path: Path) -> None:
@@ -3592,12 +4139,95 @@ class DesktopWorkbench:
 
         if self.outputs_tree is None:
             return
+        self.artifact_details = {}
         for item in self.outputs_tree.get_children():
             self.outputs_tree.delete(item)
-        for label, path in sorted(result.items()):
-            if not isinstance(path, str):
+        for index, artifact in enumerate(self._artifact_entries_from_result(result)):
+            item_id = f"artifact-{index}"
+            self.outputs_tree.insert("", tk.END, iid=item_id, values=[artifact["label"], artifact["path"]])
+            self.artifact_details[item_id] = artifact
+        if self.outputs_tree.get_children():
+            first_item = self.outputs_tree.get_children()[0]
+            self.outputs_tree.selection_set(first_item)
+            self.outputs_tree.focus(first_item)
+            self._render_output_summary(first_item)
+        else:
+            self._write_summary_widget(
+                self.artifact_summary_text,
+                "No artifact paths are available yet. Start a run or refresh a results directory to populate this browser.",
+            )
+
+    def _artifact_entries_from_result(self, result: dict[str, Any]) -> list[dict[str, str]]:
+        """Extract likely filesystem artifacts from a pipeline result payload."""
+
+        entries: list[dict[str, str]] = []
+        allowed_suffixes = {".csv", ".json", ".md", ".db", ".txt", ".pdf"}
+        for label, raw_value in sorted(result.items()):
+            if not isinstance(raw_value, str):
                 continue
-            self.outputs_tree.insert("", tk.END, values=[label, path])
+            candidate = raw_value.strip()
+            if not candidate:
+                continue
+            path = Path(candidate)
+            label_lower = label.lower()
+            if path.suffix.lower() not in allowed_suffixes and not (
+                label_lower.endswith(("_dir", "_path")) or "dir" in label_lower or "path" in label_lower
+            ):
+                continue
+            entries.append(
+                {
+                    "label": label,
+                    "path": str(path),
+                    "summary": self._summarize_artifact_path(label, path),
+                }
+            )
+        return entries
+
+    def _summarize_artifact_path(self, label: str, path: Path) -> str:
+        """Build a human-readable summary for one output artifact or directory."""
+
+        lines = [f"Artifact key: {label}", f"Resolved path: {path}"]
+        if path.exists():
+            if path.is_dir():
+                child_count = len(list(path.iterdir()))
+                lines.append("Artifact type: directory")
+                lines.append(f"Contains: {child_count} direct children")
+            elif path.suffix.lower() == ".csv":
+                try:
+                    dataframe = pd.read_csv(path)
+                    lines.append("Artifact type: CSV artifact")
+                    lines.append(f"Rows: {len(dataframe)}")
+                    lines.append(f"Columns: {', '.join(dataframe.columns[:8]) or '(none)'}")
+                except Exception:  # noqa: BLE001
+                    lines.append("Artifact type: CSV artifact")
+                    lines.append("Summary: could not parse the CSV preview.")
+            elif path.suffix.lower() == ".json":
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8"))
+                    lines.append("Artifact type: JSON artifact")
+                    if isinstance(payload, dict):
+                        lines.append(f"Top-level keys: {', '.join(list(payload.keys())[:8]) or '(none)'}")
+                    elif isinstance(payload, list):
+                        lines.append(f"Top-level items: {len(payload)}")
+                except Exception:  # noqa: BLE001
+                    lines.append("Artifact type: JSON artifact")
+                    lines.append("Summary: could not parse the JSON preview.")
+            elif path.suffix.lower() == ".md":
+                try:
+                    lines.append("Artifact type: Markdown artifact")
+                    lines.append(f"Approximate lines: {len(path.read_text(encoding='utf-8').splitlines())}")
+                except OSError:
+                    lines.append("Artifact type: Markdown artifact")
+                    lines.append("Summary: could not read the Markdown preview.")
+            elif path.suffix.lower() == ".db":
+                lines.append("Artifact type: SQLite database")
+                lines.append(f"File size: {path.stat().st_size} bytes")
+            else:
+                lines.append(f"Artifact type: {path.suffix.lower() or 'file'}")
+                lines.append(f"File size: {path.stat().st_size} bytes")
+        else:
+            lines.append("Artifact status: path does not exist yet. It may be planned for the next run.")
+        return "\n".join(lines)
 
     def _open_results_dir(self) -> None:
         """Open the configured results directory in the platform file manager."""
@@ -3619,6 +4249,261 @@ class DesktopWorkbench:
         if len(values) < 2:
             return
         self._open_path(Path(values[1]))
+
+    def _open_selected_output_parent(self) -> None:
+        """Open the parent folder of the currently selected artifact."""
+
+        if self.outputs_tree is None:
+            return
+        selection = self.outputs_tree.selection()
+        if not selection:
+            return
+        artifact = self.artifact_details.get(selection[0])
+        if not artifact:
+            return
+        artifact_path = Path(artifact["path"])
+        self._open_path(artifact_path if artifact_path.is_dir() else artifact_path.parent)
+
+    def _handle_output_selection(self, _event: Any | None = None) -> None:
+        """Render the artifact summary for the selected output item."""
+
+        if self.outputs_tree is None:
+            return
+        selection = self.outputs_tree.selection()
+        if not selection:
+            return
+        self._render_output_summary(selection[0])
+
+    def _render_output_summary(self, item_id: str) -> None:
+        """Show one artifact summary in the outputs detail pane."""
+
+        artifact = self.artifact_details.get(item_id)
+        if not artifact:
+            return
+        self._write_summary_widget(self.artifact_summary_text, artifact["summary"])
+
+    def _current_history_path(self) -> Path:
+        """Return the UI run-history file path derived from the current data directory."""
+
+        values = self._collect_form_values()
+        data_dir = Path(str(values.get("data_dir", "data") or "data"))
+        data_dir.mkdir(parents=True, exist_ok=True)
+        return data_dir / self.RUN_HISTORY_FILENAME
+
+    def _load_run_history_entries(self) -> list[dict[str, Any]]:
+        """Read stored run-history entries from disk, tolerating missing or malformed files."""
+
+        path = self._current_history_path()
+        if not path.exists():
+            return []
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return []
+        if isinstance(payload, list):
+            return [entry for entry in payload if isinstance(entry, dict)]
+        return []
+
+    def _append_run_history(self, result: dict[str, Any]) -> None:
+        """Append one run result to the UI history file and refresh the history tab."""
+
+        values = self._collect_form_values()
+        entry = {
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "status": str(result.get("run_status", "completed") or "completed"),
+            "topic": str(values.get("research_topic", "") or ""),
+            "run_mode": str(values.get("run_mode", "") or ""),
+            "results_dir": str(values.get("results_dir", "") or ""),
+            "error": str(result.get("run_error", "") or ""),
+            "papers_csv": str(result.get("papers_csv", "") or ""),
+            "included_papers_csv": str(result.get("included_papers_csv", "") or ""),
+            "excluded_papers_csv": str(result.get("excluded_papers_csv", "") or ""),
+        }
+        history = self._load_run_history_entries()
+        history.insert(0, entry)
+        history = history[:50]
+        path = self._current_history_path()
+        path.write_text(json.dumps(history, indent=2), encoding="utf-8")
+        self.run_history_entries = history
+        self._refresh_run_history_tab()
+
+    def _refresh_run_history_tab(self) -> None:
+        """Reload the run-history tree from the backing JSON file."""
+
+        if self.run_history_tree is None:
+            return
+        self.run_history_entries = self._load_run_history_entries()
+        for item in self.run_history_tree.get_children():
+            self.run_history_tree.delete(item)
+        for index, entry in enumerate(self.run_history_entries):
+            self.run_history_tree.insert(
+                "",
+                tk.END,
+                iid=f"history-{index}",
+                values=(entry.get("timestamp", ""), entry.get("status", ""), entry.get("topic", "")),
+            )
+        if self.run_history_tree.get_children():
+            first_item = self.run_history_tree.get_children()[0]
+            self.run_history_tree.selection_set(first_item)
+            self.run_history_tree.focus(first_item)
+            self._render_run_history_entry(first_item)
+        else:
+            self._write_summary_widget(self.run_history_text, "No runs have been recorded in this workbench yet.")
+
+    def _handle_run_history_selection(self, _event: Any | None = None) -> None:
+        """Show details for the currently selected run-history row."""
+
+        if self.run_history_tree is None:
+            return
+        selection = self.run_history_tree.selection()
+        if not selection:
+            return
+        self._render_run_history_entry(selection[0])
+
+    def _render_run_history_entry(self, item_id: str) -> None:
+        """Render one run-history entry into the detail pane."""
+
+        try:
+            index = int(item_id.split("-", 1)[1])
+        except (IndexError, ValueError):
+            return
+        if index >= len(self.run_history_entries):
+            return
+        entry = self.run_history_entries[index]
+        lines = [
+            f"Timestamp: {entry.get('timestamp', '')}",
+            f"Status: {entry.get('status', '')}",
+            f"Topic: {entry.get('topic', '')}",
+            f"Run mode: {entry.get('run_mode', '')}",
+            f"Results directory: {entry.get('results_dir', '')}",
+        ]
+        if entry.get("error"):
+            lines.append(f"Error: {entry['error']}")
+        for key in ("papers_csv", "included_papers_csv", "excluded_papers_csv"):
+            value = entry.get(key, "")
+            if value:
+                lines.append(f"{key}: {value}")
+        self._write_summary_widget(self.run_history_text, "\n".join(lines))
+
+    def _refresh_chart_preview(self, papers_path: Path) -> None:
+        """Draw a lightweight chart preview using the current papers CSV when available."""
+
+        if self.chart_canvas is None:
+            return
+        self.chart_canvas.delete("all")
+        if not papers_path.exists():
+            self._write_summary_widget(
+                self.charts_summary_text,
+                "No papers.csv file is available yet, so the chart preview is empty.",
+            )
+            return
+        dataframe = pd.read_csv(papers_path)
+        decision_series = dataframe.get("inclusion_decision", pd.Series(["unreviewed"] * len(dataframe))).fillna("")
+        decision_counts = {
+            "Include": int((decision_series == "include").sum()),
+            "Maybe": int((decision_series == "maybe").sum()),
+            "Exclude": int((decision_series == "exclude").sum()),
+            "Unreviewed": int((decision_series.astype(str).str.strip() == "").sum()),
+        }
+        source_counts = dataframe.get("source", pd.Series(dtype="object")).fillna("").astype(str).value_counts().head(5)
+        height = max(int(self.chart_canvas.winfo_height() or 0), 320)
+        chart_left = 70
+        chart_bottom = height - 50
+        chart_top = 40
+        bar_width = 110
+        gap = 40
+        max_count = max(max(decision_counts.values()), 1)
+        self.chart_canvas.create_text(chart_left, 18, text="Screening decision preview", anchor="w", font=("Segoe UI Semibold", 12), fill=self.PALETTE["text"])
+        for index, (label, count) in enumerate(decision_counts.items()):
+            x0 = chart_left + index * (bar_width + gap)
+            x1 = x0 + bar_width
+            bar_height = int(((count / max_count) * max(chart_bottom - chart_top, 1)))
+            y0 = chart_bottom - bar_height
+            self.chart_canvas.create_rectangle(x0, y0, x1, chart_bottom, fill=self.PALETTE["accent_soft"], outline=self.PALETTE["accent"])
+            self.chart_canvas.create_text((x0 + x1) / 2, y0 - 12, text=str(count), fill=self.PALETTE["text"])
+            self.chart_canvas.create_text((x0 + x1) / 2, chart_bottom + 14, text=label, fill=self.PALETTE["muted_text"])
+        source_lines = ["Top sources:"]
+        if source_counts.empty:
+            source_lines.append("- No source data available yet.")
+        else:
+            for source, count in source_counts.items():
+                source_lines.append(f"- {source or '(blank source)'}: {count}")
+        source_lines.append("")
+        source_lines.append(
+            f"Total screened records in chart input: {len(dataframe)}"
+        )
+        self._write_summary_widget(self.charts_summary_text, "\n".join(source_lines))
+
+    def _refresh_screening_audit(self, papers_path: Path) -> None:
+        """Load screening decisions and reasoning into the audit tab."""
+
+        if self.screening_audit_tree is None:
+            return
+        self.screening_audit_rows = {}
+        for item in self.screening_audit_tree.get_children():
+            self.screening_audit_tree.delete(item)
+        if not papers_path.exists():
+            self._write_summary_widget(
+                self.screening_audit_text,
+                "No papers.csv file is available yet, so there is no screening audit to inspect.",
+            )
+            return
+        dataframe = pd.read_csv(papers_path).fillna("")
+        for index, row in dataframe.iterrows():
+            item_id = f"audit-{index}"
+            row_payload = row.to_dict()
+            self.screening_audit_rows[item_id] = row_payload
+            self.screening_audit_tree.insert(
+                "",
+                tk.END,
+                iid=item_id,
+                values=(
+                    str(row_payload.get("title", ""))[:120],
+                    row_payload.get("inclusion_decision", ""),
+                    row_payload.get("relevance_score", ""),
+                    row_payload.get("source", ""),
+                ),
+            )
+        if self.screening_audit_tree.get_children():
+            first_item = self.screening_audit_tree.get_children()[0]
+            self.screening_audit_tree.selection_set(first_item)
+            self.screening_audit_tree.focus(first_item)
+            self._render_screening_audit_row(first_item)
+        else:
+            self._write_summary_widget(self.screening_audit_text, "The audit table loaded, but it contains no rows.")
+
+    def _handle_screening_audit_selection(self, _event: Any | None = None) -> None:
+        """Render details for the selected screening audit row."""
+
+        if self.screening_audit_tree is None:
+            return
+        selection = self.screening_audit_tree.selection()
+        if not selection:
+            return
+        self._render_screening_audit_row(selection[0])
+
+    def _render_screening_audit_row(self, item_id: str) -> None:
+        """Show one screening audit record with reasons and extracted text."""
+
+        row = self.screening_audit_rows.get(item_id)
+        if not row:
+            return
+        lines = [
+            f"Title: {row.get('title', '')}",
+            f"Decision: {row.get('inclusion_decision', '')}",
+            f"Relevance score: {row.get('relevance_score', '')}",
+            f"Source: {row.get('source', '')}",
+            f"Year: {row.get('year', '')}",
+            f"DOI: {row.get('doi', '')}",
+            "",
+            f"Explanation: {row.get('relevance_explanation', '') or '(not available)'}",
+            "",
+            f"Retain reason: {row.get('retain_reason', '') or '(not available)'}",
+            f"Exclusion reason: {row.get('exclusion_reason', '') or '(not available)'}",
+            "",
+            f"Extracted passage: {row.get('extracted_passage', '') or '(not available)'}",
+        ]
+        self._write_summary_widget(self.screening_audit_text, "\n".join(lines))
 
     def _open_path(self, path: Path) -> None:
         """Open a file or directory using the host operating system defaults."""

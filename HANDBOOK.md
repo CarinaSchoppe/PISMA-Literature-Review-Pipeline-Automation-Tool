@@ -87,6 +87,9 @@ Main tabs:
 - `Included`
 - `Excluded`
 - `Outputs`
+- `Charts`
+- `Run History`
+- `Screening Audit`
 - `Handbook`
 
 Settings pages:
@@ -104,11 +107,16 @@ Settings layout:
 - the center pane keeps the current settings page in focus
 - the right inspector contains `Find`, `Quick Edit`, `Guides`, and `Summary` tabs so secondary tools do not overwhelm the main form
 - the three settings panes are resizable, so you can give more space to the editor or inspector when needed
+- the inspector `Summary` tab shows the current model setup, provider health, grouped path summaries, and an export preview before a run starts
+- the `Quick Edit` tab keeps grouped output toggles and grouped path controls together so storage changes stay easier to review
 
 Important visibility behavior:
 
 - each settings page is vertically scrollable
 - the `Quick Edit` inspector tab is also scrollable when its cards exceed the visible window height
+- the `Summary` inspector tab is also scrollable
+- `Compact` settings mode collapses longer section descriptions to reduce visual density
+- `Advanced` settings mode restores the full section helper text on the settings pages
 - `Connections and Keys` is the dedicated page for provider URLs, API keys, Crossref mailto, and Unpaywall email
 - `Advanced Runtime` stays hidden until `Show advanced settings` is enabled or a search jump opens one of its fields
 - hover help, handbook entries, and focus help use expanded English explanations that describe the purpose of a setting, what happens when the setting is enabled or disabled, and a practical example where useful
@@ -118,6 +126,29 @@ Toolbar actions:
 - `Start Run`: run discovery and analysis using the current form values
 - `Analyze Stored Results`: skip new discovery and analyze papers that already exist in the active database
 - `Force Stop`: request a controlled stop
+
+Result inspection tabs:
+
+- `Outputs`: artifact browser with file summaries, planned export preview, `Open Selected`, and `Open Parent Folder`
+- `Charts`: lightweight on-device chart preview for screening decisions and source mix
+- `Run History`: persistent JSON-backed record of recent runs, including status, topic, and artifact paths
+- `Screening Audit`: per-paper explanations, retain reasons, exclusion reasons, and extracted passages from `papers.csv`
+
+Pass-chain builder:
+
+- the pass builder is a visual dialog rather than a raw text field
+- each pass can set:
+  - pass name
+  - provider
+  - decision mode
+  - threshold
+  - maybe margin
+  - model override
+  - minimum previous-pass score required to enter the pass
+- the builder also shows:
+  - a chain overview on the left
+  - a selected-pass preview on the right
+  - a `Duplicate Pass` action for quick branching
 
 Important stop behavior:
 

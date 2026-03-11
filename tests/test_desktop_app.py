@@ -147,6 +147,31 @@ class DesktopWorkbenchTests(unittest.TestCase):
         self.assertIn("Model provider and pass chain", tuple(self.workbench.quick_destination_combo["values"]))
         self.assertIn("Output guide", tuple(self.workbench.guide_choice_combo["values"]))
 
+    def test_workbench_includes_charts_history_audit_and_artifact_browser_widgets(self) -> None:
+        notebook_labels = [self.workbench.notebook.tab(tab_id, "text") for tab_id in self.workbench.notebook.tabs()]
+        self.assertIn("Charts", notebook_labels)
+        self.assertIn("Run History", notebook_labels)
+        self.assertIn("Screening Audit", notebook_labels)
+        self.assertIsNotNone(self.workbench.outputs_preview_text)
+        self.assertIsNotNone(self.workbench.artifact_summary_text)
+        self.assertIsNotNone(self.workbench.provider_health_tree)
+        self.assertIsNotNone(self.workbench.chart_canvas)
+        self.assertIsNotNone(self.workbench.run_history_tree)
+        self.assertIsNotNone(self.workbench.screening_audit_tree)
+
+    def test_compact_and_advanced_settings_modes_toggle_helper_density(self) -> None:
+        intro_label = self.workbench.settings_page_intro_labels["Review Setup"]
+        summary_label = self.workbench.settings_section_summary_labels["Review Brief"]
+
+        self.assertEqual(intro_label.winfo_manager(), "")
+        self.assertEqual(summary_label.winfo_manager(), "")
+
+        self.workbench.settings_mode_var.set("advanced")
+        self.workbench._apply_settings_mode()
+
+        self.assertEqual(intro_label.winfo_manager(), "grid")
+        self.assertEqual(summary_label.winfo_manager(), "grid")
+
     def test_advanced_settings_page_is_hidden_until_requested(self) -> None:
         notebook = self.workbench.settings_pages_notebook
         advanced_page = self.workbench.settings_page_frames["Advanced Runtime"]
