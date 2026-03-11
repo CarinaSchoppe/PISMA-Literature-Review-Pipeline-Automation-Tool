@@ -7,7 +7,7 @@ import unittest
 from types import SimpleNamespace
 
 from config import ApiSettings, ResearchConfig
-from ui.desktop_app import DesktopWorkbench
+from ui.desktop_app import DesktopWorkbench, WorkbenchRoot
 
 
 def _walk_widgets(widget: tk.Misc):
@@ -37,6 +37,9 @@ class DesktopWorkbenchTests(unittest.TestCase):
 
     def test_hover_help_is_enabled_by_default(self) -> None:
         self.assertTrue(self.workbench.hover_help_enabled.get())
+
+    def test_workbench_uses_custom_root_for_callback_exception_routing(self) -> None:
+        self.assertIsInstance(self.workbench.root, WorkbenchRoot)
 
     def test_source_fields_have_descriptive_help_text(self) -> None:
         self.assertIn("OpenAlex", self.workbench._help_text_for_field("openalex_enabled"))
@@ -188,6 +191,10 @@ class DesktopWorkbenchTests(unittest.TestCase):
         self.assertEqual(set(self.workbench.settings_nav_buttons.keys()), {name for name, _ in self.workbench.SETTINGS_PAGES})
         self.assertIsNotNone(self.workbench.settings_tools_notebook)
         self.assertIsNotNone(self.workbench.settings_panedwindow)
+        self.assertIsNotNone(self.workbench.workspace_overview_content)
+        self.assertIsNotNone(self.workbench.workspace_overview_toggle_button)
+        self.assertIsNotNone(self.workbench.settings_overview_content)
+        self.assertIsNotNone(self.workbench.settings_overview_toggle_button)
         self.assertIsNotNone(self.workbench.quick_destination_combo)
         self.assertIsNotNone(self.workbench.guide_choice_combo)
 
@@ -258,12 +265,37 @@ class DesktopWorkbenchTests(unittest.TestCase):
 
         self.assertEqual(intro_label.winfo_manager(), "")
         self.assertEqual(summary_label.winfo_manager(), "")
+        self.assertEqual(self.workbench.workspace_overview_content.winfo_manager(), "")
+        self.assertEqual(self.workbench.settings_overview_content.winfo_manager(), "")
+        self.assertEqual(self.workbench.settings_page_description_label.winfo_manager(), "")
 
         self.workbench.settings_mode_var.set("advanced")
         self.workbench._apply_settings_mode()
 
         self.assertEqual(intro_label.winfo_manager(), "grid")
         self.assertEqual(summary_label.winfo_manager(), "grid")
+        self.assertEqual(self.workbench.workspace_overview_content.winfo_manager(), "grid")
+        self.assertEqual(self.workbench.settings_overview_content.winfo_manager(), "grid")
+        self.assertEqual(self.workbench.settings_page_description_label.winfo_manager(), "grid")
+
+    def test_overview_toggles_and_small_window_mode_keep_editing_area_visible(self) -> None:
+        self.workbench.settings_mode_var.set("advanced")
+        self.workbench._apply_settings_mode()
+        self.assertEqual(self.workbench.workspace_overview_content.winfo_manager(), "grid")
+        self.assertEqual(self.workbench.settings_overview_content.winfo_manager(), "grid")
+
+        self.workbench._toggle_workspace_overview()
+        self.workbench._toggle_settings_overview()
+        self.assertEqual(self.workbench.workspace_overview_content.winfo_manager(), "")
+        self.assertEqual(self.workbench.settings_overview_content.winfo_manager(), "")
+
+        self.workbench.root.geometry("980x680")
+        self.workbench.root.update_idletasks()
+        self.workbench._apply_responsive_layout()
+        self.assertTrue(self.workbench.compact_window_mode.get())
+        self.assertEqual(self.workbench.workspace_overview_content.winfo_manager(), "")
+        self.assertEqual(self.workbench.settings_overview_content.winfo_manager(), "")
+        self.assertEqual(self.workbench.settings_page_description_label.winfo_manager(), "")
 
     def test_advanced_settings_page_is_hidden_until_requested(self) -> None:
         notebook = self.workbench.settings_pages_notebook

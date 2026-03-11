@@ -15,7 +15,7 @@ import tkinter.font as tkfont
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
-from typing import Any
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -34,6 +34,27 @@ from utils.logging_utils import configure_application_logging
 from utils.text_processing import parse_search_terms
 
 LOGGER = logging.getLogger(__name__)
+
+
+class WorkbenchRoot(tk.Tk):
+    """Tk root that forwards callback exceptions into an injectable handler."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.callback_exception_handler: Callable[[type[BaseException], BaseException, Any], None] | None = None
+
+    def report_callback_exception(
+        self,
+        exc: type[BaseException],
+        val: BaseException,
+        tb: Any,
+    ) -> None:
+        """Use the configured handler when available instead of Tk's default stderr printer."""
+
+        if self.callback_exception_handler is not None:
+            self.callback_exception_handler(exc, val, tb)
+            return
+        super().report_callback_exception(exc, val, tb)
 
 
 class UILogHandler(logging.Handler):
@@ -1190,10 +1211,10 @@ class DesktopWorkbench:
 
     def __init__(self, args: Any) -> None:
         self.args = args
-        self.root = tk.Tk()
+        self.root = WorkbenchRoot()
         self.root.title("PRISMA Literature Review Workbench")
-        self.root.geometry("1280x820")
-        self.root.minsize(980, 680)
+        self.root.geometry("1180x760")
+        self.root.minsize(860, 620)
         self.style = ttk.Style(self.root)
         self.active_theme = self._configure_theme()
         self.profile_manager = ProfileManager()
@@ -1236,6 +1257,11 @@ class DesktopWorkbench:
         self.settings_pages_notebook: ttk.Notebook | None = None
         self.settings_tools_notebook: ttk.Notebook | None = None
         self.settings_panedwindow: ttk.Panedwindow | None = None
+        self.workspace_overview_content: ttk.Frame | None = None
+        self.workspace_overview_toggle_button: ttk.Button | None = None
+        self.settings_overview_content: ttk.Frame | None = None
+        self.settings_overview_toggle_button: ttk.Button | None = None
+        self.settings_page_description_label: ttk.Label | None = None
         self.settings_page_frames: dict[str, ttk.Frame] = {}
         self.settings_page_content_frames: dict[str, ttk.Frame] = {}
         self.settings_page_canvases: dict[str, tk.Canvas] = {}
@@ -1279,6 +1305,8 @@ class DesktopWorkbench:
         self.status_var = tk.StringVar(value=self.base_status_message)
         self.hover_help_enabled = tk.BooleanVar(value=True)
         self.show_advanced_settings = tk.BooleanVar(value=bool(self.form_values.get("ui_show_advanced_settings", False)))
+        self.compact_window_mode = tk.BooleanVar(value=False)
+        self.is_closing = False
         self.hover_tooltip = HoverTooltip(self.root)
         self._hover_message_active = False
         self.all_filter_var = tk.StringVar(value="all")
@@ -1293,11 +1321,14 @@ class DesktopWorkbench:
         self._refresh_settings_overview()
         self._refresh_profile_choices()
         self._refresh_run_history_tab()
+        self.root.callback_exception_handler = self._report_callback_exception
         self.root.bind_all("<MouseWheel>", self._on_settings_mousewheel, add="+")
         self.root.bind_all("<Shift-MouseWheel>", self._on_settings_mousewheel, add="+")
         self.root.bind_all("<Button-4>", self._on_settings_mousewheel, add="+")
         self.root.bind_all("<Button-5>", self._on_settings_mousewheel, add="+")
+        self.root.bind("<Configure>", self._handle_root_resize, add="+")
         self.root.after(100, self._poll_messages)
+        self.root.after_idle(self._apply_responsive_layout)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     def _configure_theme(self) -> str:
@@ -1917,12 +1948,126 @@ class DesktopWorkbench:
                 label.grid()
             else:
                 label.grid_remove()
+        if self.settings_page_description_label is not None:
+            if advanced_mode:
+                self.settings_page_description_label.grid()
+            else:
+                self.settings_page_description_label.grid_remove()
+        self._apply_workspace_overview_visibility(advanced_mode and not self.compact_window_mode.get())
+        self._apply_settings_overview_visibility(advanced_mode and not self.compact_window_mode.get())
         mode_message = (
             "Advanced settings mode enabled. Section descriptions remain visible for deeper orientation."
             if advanced_mode
             else "Compact settings mode enabled. Non-essential section descriptions are collapsed to keep the layout lighter."
         )
         self._set_status(mode_message)
+
+    def _set_collapsible_section_visibility(
+        self,
+        content: ttk.Frame | None,
+        button: ttk.Button | None,
+        *,
+        visible: bool,
+        expanded_text: str,
+        collapsed_text: str,
+    ) -> None:
+        """Show or hide one collapsible section and keep its button label in sync."""
+
+        if button is not None:
+            button.configure(text=expanded_text if visible else collapsed_text)
+        if content is None:
+            return
+        if visible:
+            content.grid()
+        else:
+            content.grid_remove()
+
+    def _apply_workspace_overview_visibility(self, visible: bool) -> None:
+        """Show or collapse the large workspace overview at the top of the app."""
+
+        self._set_collapsible_section_visibility(
+            self.workspace_overview_content,
+            self.workspace_overview_toggle_button,
+            visible=visible,
+            expanded_text="Hide workspace overview",
+            collapsed_text="Show workspace overview",
+        )
+
+    def _apply_settings_overview_visibility(self, visible: bool) -> None:
+        """Show or collapse the large settings overview in the settings tab."""
+
+        self._set_collapsible_section_visibility(
+            self.settings_overview_content,
+            self.settings_overview_toggle_button,
+            visible=visible,
+            expanded_text="Hide page overview",
+            collapsed_text="Show page overview",
+        )
+
+    def _toggle_workspace_overview(self) -> None:
+        """Invert the workspace overview visibility."""
+
+        is_visible = bool(self.workspace_overview_content and self.workspace_overview_content.winfo_manager())
+        self._apply_workspace_overview_visibility(not is_visible)
+
+    def _toggle_settings_overview(self) -> None:
+        """Invert the settings overview visibility."""
+
+        is_visible = bool(self.settings_overview_content and self.settings_overview_content.winfo_manager())
+        self._apply_settings_overview_visibility(not is_visible)
+
+    def _apply_default_settings_pane_positions(self) -> None:
+        """Give the settings shell narrower sidebars so the editor stays usable on smaller windows."""
+
+        if self.settings_panedwindow is None:
+            return
+        try:
+            self.settings_panedwindow.update_idletasks()
+            width = max(int(self.settings_panedwindow.winfo_width() or 0), 920)
+            left_width = 210 if self.compact_window_mode.get() else 240
+            right_width = 300 if self.compact_window_mode.get() else 340
+            self.settings_panedwindow.sashpos(0, left_width)
+            self.settings_panedwindow.sashpos(1, max(left_width + 280, width - right_width))
+        except tk.TclError:
+            return
+
+    def _apply_responsive_layout(self, *_args: Any) -> None:
+        """Compact the large overview blocks when the window is not tall enough for them."""
+
+        width = int(self.root.winfo_width() or 0)
+        height = int(self.root.winfo_height() or 0)
+        compact_window = width < 1280 or height < 820
+        self.compact_window_mode.set(compact_window)
+        advanced_mode = self.settings_mode_var.get() == "advanced"
+        show_large_overviews = advanced_mode and not compact_window
+        self._apply_workspace_overview_visibility(show_large_overviews)
+        self._apply_settings_overview_visibility(show_large_overviews)
+        if self.settings_page_description_label is not None:
+            if show_large_overviews:
+                self.settings_page_description_label.grid()
+            else:
+                self.settings_page_description_label.grid_remove()
+        self.root.after_idle(self._apply_default_settings_pane_positions)
+
+    def _handle_root_resize(self, _event: tk.Event | None = None) -> None:
+        """Refresh the responsive layout after one window resize event."""
+
+        if self.is_closing:
+            return
+        self._apply_responsive_layout()
+
+    def _report_callback_exception(
+        self,
+        exc_type: type[BaseException],
+        exc_value: BaseException,
+        exc_traceback: Any,
+    ) -> None:
+        """Route Tk callback failures into project logging instead of noisy stderr output."""
+
+        if self.is_closing and isinstance(exc_value, tk.TclError):
+            LOGGER.debug("Ignored Tk callback during shutdown: %s", exc_value)
+            return
+        LOGGER.error("Tkinter callback failed: %s", exc_value, exc_info=(exc_type, exc_value, exc_traceback))
 
     def _build_layout(self) -> None:
         """Construct the top-level toolbar, notebook, and status bar widgets."""
@@ -1931,18 +2076,40 @@ class DesktopWorkbench:
         shell.columnconfigure(0, weight=1)
         shell.rowconfigure(2, weight=1)
 
-        header = ttk.Frame(shell, padding=18, style="Header.TFrame")
+        header = ttk.Frame(shell, padding=12, style="Header.TFrame")
         header.grid(row=0, column=0, sticky="ew")
         header.columnconfigure(0, weight=1)
-        header.columnconfigure(1, weight=0)
-
-        title_block = ttk.Frame(header, style="Header.TFrame")
-        title_block.grid(row=0, column=0, sticky="w")
-        ttk.Label(title_block, text="PRISMA Literature Review Workbench", style="HeroTitle.TLabel").grid(
-            row=0,
-            column=0,
-            sticky="w",
+        summary_strip = ttk.Frame(header, style="Header.TFrame")
+        summary_strip.grid(row=0, column=0, sticky="ew")
+        summary_strip.columnconfigure(0, weight=1)
+        ttk.Label(summary_strip, text="PRISMA Literature Review Workbench", style="HeroTitle.TLabel").grid(
+            row=0, column=0, sticky="w"
         )
+        ttk.Label(
+            summary_strip,
+            text=(
+                "Compact the overview when you need more room. The pages below stay fully usable without fullscreen."
+            ),
+            wraplength=760,
+            justify="left",
+            style="HeroSubtitle.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        self.workspace_overview_toggle_button = ttk.Button(
+            summary_strip,
+            text="Show workspace overview",
+            command=self._toggle_workspace_overview,
+            style="Secondary.TButton",
+        )
+        self.workspace_overview_toggle_button.grid(row=0, column=1, rowspan=2, sticky="e")
+
+        header_content = ttk.Frame(header, style="Header.TFrame")
+        header_content.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        header_content.columnconfigure(0, weight=1)
+        header_content.columnconfigure(1, weight=0)
+        self.workspace_overview_content = header_content
+
+        title_block = ttk.Frame(header_content, style="Header.TFrame")
+        title_block.grid(row=0, column=0, sticky="w")
         ttk.Label(
             title_block,
             text=(
@@ -1950,10 +2117,10 @@ class DesktopWorkbench:
                 "guided workspace. Use the page rail on the left to move between logical areas instead of scanning a "
                 "single oversized form."
             ),
-            wraplength=700,
+            wraplength=720,
             justify="left",
             style="HeroSubtitle.TLabel",
-        ).grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ).grid(row=0, column=0, sticky="w")
         header_metrics = self._build_metric_strip(
             title_block,
             [
@@ -1963,10 +2130,10 @@ class DesktopWorkbench:
             ],
             card_padding=(12, 10),
         )
-        header_metrics.grid(row=2, column=0, sticky="ew", pady=(14, 0))
+        header_metrics.grid(row=1, column=0, sticky="ew", pady=(12, 0))
 
-        header_controls = ttk.Frame(header, padding=14, style="HeroPanel.TFrame")
-        header_controls.grid(row=0, column=1, sticky="e", padx=(16, 0))
+        header_controls = ttk.Frame(header_content, padding=14, style="HeroPanel.TFrame")
+        header_controls.grid(row=0, column=1, sticky="ne", padx=(16, 0))
         header_controls.columnconfigure(0, weight=1)
         ttk.Label(header_controls, text="Workspace profile", style="HeroPanelTitle.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(
@@ -2044,6 +2211,10 @@ class DesktopWorkbench:
             "Open Results Folder": open_results_button,
         }
         self._bind_hover_help(hover_toggle, "Turn detailed hover explanations on or off without hiding the handbook.")
+        self._bind_hover_help(
+            self.workspace_overview_toggle_button,
+            "Collapse or expand the large top overview so the notebook area gets more room in smaller windows.",
+        )
         self._bind_hover_help(start_button, "Run the full pipeline using the current UI settings.")
         self._bind_hover_help(
             analyze_button,
@@ -2106,18 +2277,40 @@ class DesktopWorkbench:
         container.columnconfigure(0, weight=1)
         container.rowconfigure(1, weight=1)
 
-        hero = ttk.Frame(container, padding=18, style="PageHero.TFrame")
+        hero = ttk.Frame(container, padding=14, style="PageHero.TFrame")
         hero.grid(row=0, column=0, sticky="ew", pady=(0, 12))
         hero.columnconfigure(0, weight=1)
-        hero.columnconfigure(1, weight=0)
-        ttk.Label(hero, text="Settings workspace", style="Kicker.TLabel").grid(row=0, column=0, sticky="w")
+        summary_strip = ttk.Frame(hero, style="PageHero.TFrame")
+        summary_strip.grid(row=0, column=0, sticky="ew")
+        summary_strip.columnconfigure(0, weight=1)
+        ttk.Label(summary_strip, text="Settings workspace", style="Kicker.TLabel").grid(row=0, column=0, sticky="w")
         ttk.Label(
-            hero,
+            summary_strip,
             text="Configure the review one logical page at a time",
             style="PageTitle.TLabel",
         ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Label(
+            summary_strip,
+            text="Collapse this overview when you need more vertical room for the actual settings pages.",
+            wraplength=760,
+            justify="left",
+            style="PageBody.TLabel",
+        ).grid(row=2, column=0, sticky="w", pady=(6, 0))
+        self.settings_overview_toggle_button = ttk.Button(
+            summary_strip,
+            text="Show page overview",
+            command=self._toggle_settings_overview,
+            style="Secondary.TButton",
+        )
+        self.settings_overview_toggle_button.grid(row=0, column=1, rowspan=3, sticky="ne")
+
+        hero_content = ttk.Frame(hero, style="PageHero.TFrame")
+        hero_content.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        hero_content.columnconfigure(0, weight=1)
+        hero_content.columnconfigure(1, weight=0)
+        self.settings_overview_content = hero_content
         hero_body = ttk.Label(
-            hero,
+            hero_content,
             text=(
                 "Every CLI-relevant runtime setting is exposed here, but the layout is split into a page rail, a "
                 "focused editing canvas, and an inspector so the interface stays easier to scan. Storage paths live on "
@@ -2128,9 +2321,9 @@ class DesktopWorkbench:
             justify="left",
             style="PageBody.TLabel",
         )
-        hero_body.grid(row=2, column=0, sticky="w", pady=(8, 0))
+        hero_body.grid(row=0, column=0, sticky="w")
         hero_metrics = self._build_metric_strip(
-            hero,
+            hero_content,
             [
                 ("settings_brief_card", "Review brief", "Structured", "Topic, question, criteria, and exclusions stay grouped together.", "default"),
                 ("settings_discovery_card", "Discovery controls", "Source aware", "Breadth, rate limits, and import paths are split into dedicated sections.", "accent"),
@@ -2138,19 +2331,23 @@ class DesktopWorkbench:
             ],
             card_padding=(12, 10),
         )
-        hero_metrics.grid(row=3, column=0, sticky="ew", pady=(14, 0))
+        hero_metrics.grid(row=1, column=0, sticky="ew", pady=(12, 0))
         hero_chip = ttk.Label(
-            hero,
+            hero_content,
             text="Resizable panes  •  Scrollable pages  •  Quick jumps  •  Live guidance",
             style="HeroPill.TLabel",
         )
-        hero_chip.grid(row=0, column=1, rowspan=4, sticky="ne", padx=(20, 0))
+        hero_chip.grid(row=0, column=1, rowspan=2, sticky="ne", padx=(20, 0))
         self._bind_hover_help(
             hero_chip,
             "You can resize the page rail, the main editor, and the inspector. The center pages scroll independently, "
             "and common jumps stay in dropdown menus instead of a button wall.",
         )
         self._bind_hover_help(hero_body, "Overview of the guided settings workspace.")
+        self._bind_hover_help(
+            self.settings_overview_toggle_button,
+            "Collapse or expand the large settings overview so the real editing canvas gets more vertical space.",
+        )
 
         shell_panes = ttk.Panedwindow(container, orient="horizontal")
         shell_panes.grid(row=1, column=0, sticky="nsew")
@@ -2190,6 +2387,7 @@ class DesktopWorkbench:
             style="PageBody.TLabel",
         )
         page_description.grid(row=2, column=0, sticky="w", pady=(6, 0))
+        self.settings_page_description_label = page_description
         scroll_hint = ttk.Label(
             page_header,
             text="Use the mouse wheel or trackpad to scroll this page.",
@@ -5004,6 +5202,8 @@ class DesktopWorkbench:
     def _poll_messages(self) -> None:
         """Drain queued log lines, status events, and results without blocking the UI."""
 
+        if self.is_closing:
+            return
         try:
             while True:
                 message_type, payload = self.message_queue.get_nowait()
@@ -5021,7 +5221,10 @@ class DesktopWorkbench:
         except queue.Empty:
             pass
         # Tkinter stays responsive because the worker communicates only through this queued pump.
-        self.root.after(100, self._poll_messages)
+        try:
+            self.root.after(100, self._poll_messages)
+        except tk.TclError:
+            return
 
     def _append_log(self, message: str) -> None:
         """Append one line to the log tab and keep the newest output visible."""
@@ -5515,6 +5718,7 @@ class DesktopWorkbench:
     def _on_close(self) -> None:
         """Detach the UI log handler and close the root window cleanly."""
 
+        self.is_closing = True
         if self.current_controller is not None:
             self.current_controller.request_stop()
         self.hover_tooltip.hide()
