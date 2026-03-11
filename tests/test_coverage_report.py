@@ -314,6 +314,8 @@ class CoverageReportTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             exit_code = coverage_report.run_coverage_report(["--results-dir", tmpdir, "--fail-under", "99.5"])
+        with self.assertRaisesRegex(AssertionError, "Unexpected command"):
+            fake_run(["unexpected"])
 
         self.assertEqual(exit_code, 0)
         printed_chunks = [" ".join(str(part) for part in call.args) for call in print_mock.call_args_list]
@@ -340,6 +342,8 @@ class CoverageReportTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             exit_code = coverage_report.run_coverage_report(["--results-dir", tmpdir])
+        with self.assertRaisesRegex(AssertionError, "Unexpected command"):
+            fake_run(["unexpected"])
 
         self.assertEqual(exit_code, 2)
         error_messages = [str(call.args[0]) for call in print_mock.call_args_list if call.kwargs.get("file") is sys.stderr]

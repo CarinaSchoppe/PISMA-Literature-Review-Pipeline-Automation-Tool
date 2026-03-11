@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import runpy
 import tempfile
 import types
 import unittest
@@ -188,6 +189,18 @@ class MiscHighCoverageTests(unittest.TestCase):
         tree.selection_set.assert_called_with("guide")
         tree.focus.assert_called_with("guide")
         workbench._render_handbook_entry.assert_called_with("guide")
+
+    def test_test_module_main_blocks_can_execute_without_running_full_suites(self) -> None:
+        targets = [
+            Path("tests/test_ai_screener.py"),
+            Path("tests/test_pipeline_controller_helpers.py"),
+            Path(__file__),
+        ]
+
+        for target in targets:
+            with self.subTest(target=target.name), patch("unittest.main") as main_mock:
+                runpy.run_path(str(target), run_name="__main__")
+            main_mock.assert_called_once()
 
     def test_small_model_and_text_helpers_cover_remaining_edges(self) -> None:
         with self.assertRaisesRegex(ValueError, "Paper title cannot be empty"):
