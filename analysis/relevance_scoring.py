@@ -111,6 +111,7 @@ class RelevanceScorer:
                 *self.config.inclusion_criteria,
             ],
         ) * 100
+        keyword_topic_score = topic_match.weighted_keyword_score if topic_match else keyword_topic_score
         semantic_topic_score = topic_match.score if topic_match else None
         if semantic_topic_score is not None:
             topic_score = 0.65 * keyword_topic_score + 0.35 * semantic_topic_score
@@ -197,6 +198,12 @@ class RelevanceScorer:
             topic_prefilter_threshold=topic_match.threshold if topic_match else None,
             topic_prefilter_label=topic_match.classification if topic_match else None,
             topic_prefilter_keyword_overlap=topic_match.keyword_overlap_score if topic_match else None,
+            topic_prefilter_research_fit_label=topic_match.research_fit_label if topic_match else None,
+            topic_prefilter_weighted_score=topic_match.weighted_keyword_score if topic_match else None,
+            topic_prefilter_min_keyword_matches=topic_match.min_keyword_matches if topic_match else None,
+            topic_prefilter_matched_keyword_count=topic_match.matched_keyword_count if topic_match else None,
+            topic_prefilter_extracted_topics=list(topic_match.extracted_topics) if topic_match else [],
+            topic_prefilter_keyword_details=list(topic_match.keyword_match_details) if topic_match else [],
             explanation=explanation,
             extracted_passage=extracted_passage,
             methodology_category=methodology_category,
@@ -224,6 +231,8 @@ class RelevanceScorer:
                         "semantic_topic_match": round(semantic_topic_score, 2),
                         "topic_prefilter_similarity": round(topic_match.similarity, 4) if topic_match else round(semantic_topic_score / 100.0, 4),
                         "topic_prefilter_keyword_overlap": round(topic_match.keyword_overlap_score, 4) if topic_match else 0.0,
+                        "topic_prefilter_weighted_score": round(topic_match.weighted_keyword_score, 2) if topic_match else round(keyword_topic_score, 2),
+                        "topic_prefilter_matched_keyword_count": topic_match.matched_keyword_count if topic_match else 0,
                     }
                     if semantic_topic_score is not None
                     else {}

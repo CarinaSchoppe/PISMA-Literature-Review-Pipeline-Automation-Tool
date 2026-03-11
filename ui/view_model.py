@@ -19,6 +19,7 @@ MULTILINE_FIELD_DEFAULTS = {
     "exclusion_criteria": "",
     "banned_topics": "",
     "excluded_title_terms": "",
+    "topic_prefilter_weighted_keywords": "",
     "analysis_passes": "",
 }
 
@@ -39,6 +40,9 @@ SCALAR_FIELD_DEFAULTS: dict[str, Any] = {
     "relevance_threshold": 70.0,
     "topic_prefilter_high_threshold": 0.75,
     "topic_prefilter_review_threshold": 0.55,
+    "topic_prefilter_min_keyword_matches": 1,
+    "topic_prefilter_match_threshold": 55.0,
+    "topic_prefilter_near_fit_threshold": 35.0,
     "topic_prefilter_text_mode": "title_abstract",
     "pdf_download_mode": "all",
     "full_text_max_chars": 12000,
@@ -181,6 +185,7 @@ def config_to_form_values(config: ResearchConfig) -> dict[str, Any]:
             "exclusion_criteria": "; ".join(config.exclusion_criteria),
             "banned_topics": "; ".join(config.banned_topics),
             "excluded_title_terms": "; ".join(config.excluded_title_terms),
+            "topic_prefilter_weighted_keywords": "; ".join(config.topic_prefilter_weighted_keywords),
             "analysis_passes": "\n".join(
                 "|".join(
                     [
@@ -212,6 +217,9 @@ def config_to_form_values(config: ResearchConfig) -> dict[str, Any]:
             "relevance_threshold": config.relevance_threshold,
             "topic_prefilter_high_threshold": config.topic_prefilter_high_threshold,
             "topic_prefilter_review_threshold": config.topic_prefilter_review_threshold,
+            "topic_prefilter_min_keyword_matches": config.topic_prefilter_min_keyword_matches,
+            "topic_prefilter_match_threshold": config.topic_prefilter_match_threshold,
+            "topic_prefilter_near_fit_threshold": config.topic_prefilter_near_fit_threshold,
             "topic_prefilter_text_mode": config.topic_prefilter_text_mode,
             "pdf_download_mode": config.pdf_download_mode,
             "full_text_max_chars": config.full_text_max_chars,
@@ -356,6 +364,7 @@ def form_values_to_config(values: dict[str, Any]) -> ResearchConfig:
         exclusion_criteria=str(values.get("exclusion_criteria", "") or ""),
         banned_topics=str(values.get("banned_topics", "") or ""),
         excluded_title_terms=str(values.get("excluded_title_terms", "") or ""),
+        topic_prefilter_weighted_keywords=str(values.get("topic_prefilter_weighted_keywords", "") or ""),
         search_keywords=str(values.get("search_keywords", "") or ""),
         boolean_operators=str(values.get("boolean_operators", "") or "") or None,
         pages_to_retrieve=as_int("pages_to_retrieve", 2) or 2,
@@ -379,6 +388,9 @@ def form_values_to_config(values: dict[str, Any]) -> ResearchConfig:
         topic_prefilter_filter_low_relevance=as_bool("topic_prefilter_filter_low_relevance"),
         topic_prefilter_high_threshold=as_float("topic_prefilter_high_threshold", 0.75),
         topic_prefilter_review_threshold=as_float("topic_prefilter_review_threshold", 0.55),
+        topic_prefilter_min_keyword_matches=as_int("topic_prefilter_min_keyword_matches", 1) or 1,
+        topic_prefilter_match_threshold=as_float("topic_prefilter_match_threshold", 55.0),
+        topic_prefilter_near_fit_threshold=as_float("topic_prefilter_near_fit_threshold", 35.0),
         topic_prefilter_text_mode=str(values.get("topic_prefilter_text_mode", "title_abstract") or "title_abstract"),
         download_pdfs=as_bool("download_pdfs"),
         pdf_download_mode=str(values.get("pdf_download_mode", "all") or "all"),

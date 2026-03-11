@@ -229,6 +229,7 @@ class DesktopWorkbench:
         "exclusion_criteria": ("Exclusion criteria (; separated)", 3),
         "banned_topics": ("Banned topics (; separated)", 2),
         "excluded_title_terms": ("Excluded title terms (; separated)", 2),
+        "topic_prefilter_weighted_keywords": ("Weighted research keywords", 3),
         "analysis_passes": ("Analysis passes / chained models", 4),
     }
 
@@ -279,6 +280,7 @@ class DesktopWorkbench:
         "max_papers_to_analyze": {"from_": 1, "to": 10000, "increment": 1},
         "full_text_max_chars": {"from_": 500, "to": 200000, "increment": 500},
         "topic_prefilter_max_chars": {"from_": 250, "to": 20000, "increment": 250},
+        "topic_prefilter_min_keyword_matches": {"from_": 1, "to": 50, "increment": 1},
         "max_workers": {"from_": 1, "to": 64, "increment": 1},
         "discovery_workers": {"from_": 0, "to": 64, "increment": 1},
         "io_workers": {"from_": 0, "to": 64, "increment": 1},
@@ -401,6 +403,10 @@ class DesktopWorkbench:
                 "topic_prefilter_model",
                 "topic_prefilter_high_threshold",
                 "topic_prefilter_review_threshold",
+                "topic_prefilter_match_threshold",
+                "topic_prefilter_near_fit_threshold",
+                "topic_prefilter_min_keyword_matches",
+                "topic_prefilter_weighted_keywords",
                 "analyze_full_text",
                 "openai_model",
                 "gemini_model",
@@ -522,6 +528,10 @@ class DesktopWorkbench:
         "topic_prefilter_model": "Topic prefilter model",
         "topic_prefilter_high_threshold": "Topic HIGH threshold",
         "topic_prefilter_review_threshold": "Topic REVIEW threshold",
+        "topic_prefilter_match_threshold": "Research-fit strong threshold",
+        "topic_prefilter_near_fit_threshold": "Research-fit near threshold",
+        "topic_prefilter_min_keyword_matches": "Min strong keyword matches",
+        "topic_prefilter_weighted_keywords": "Weighted research keywords",
         "topic_prefilter_text_mode": "Topic prefilter text mode",
         "topic_prefilter_max_chars": "Topic prefilter max chars",
         "llm_provider": "LLM provider",
@@ -643,6 +653,8 @@ class DesktopWorkbench:
         "llm_temperature": {"from_": 0.0, "to": 1.5, "resolution": 0.05, "digits": 2},
         "topic_prefilter_high_threshold": {"from_": 0.0, "to": 1.0, "resolution": 0.01, "digits": 2},
         "topic_prefilter_review_threshold": {"from_": 0.0, "to": 1.0, "resolution": 0.01, "digits": 2},
+        "topic_prefilter_match_threshold": {"from_": 0.0, "to": 100.0, "resolution": 1.0, "digits": 0},
+        "topic_prefilter_near_fit_threshold": {"from_": 0.0, "to": 100.0, "resolution": 1.0, "digits": 0},
         "title_similarity_threshold": {"from_": 0.0, "to": 1.0, "resolution": 0.01, "digits": 2},
     }
     HANDBOOK_GUIDES = {

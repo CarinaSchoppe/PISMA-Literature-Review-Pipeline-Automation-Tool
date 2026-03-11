@@ -30,6 +30,18 @@ STOPWORDS = {
     "using",
     "with",
 }
+KEYPHRASE_STOPWORDS = STOPWORDS | {
+    "analysis",
+    "approach",
+    "article",
+    "based",
+    "findings",
+    "paper",
+    "review",
+    "results",
+    "study",
+    "system",
+}
 
 
 def canonical_doi(value: str) -> str:
@@ -103,6 +115,34 @@ def parse_search_terms(value: str | Sequence[str] | None) -> list[str]:
         return [item.strip() for item in parts if item and item.strip()]
     return [str(item).strip() for item in value if str(item).strip()]
 
+
+def extract_keyphrases(text: str, limit: int = 12) -> list[str]:
+    """Extract lightweight unigram, bigram, and trigram keyphrases from free text."""
+
+    tokens = [
+        token
+        for token in normalize_title(text).split()
+        if len(token) >= 4 and token not in KEYPHRASE_STOPWORDS
+    ]
+    if not tokens:
+        return []
+    scores: dict[str, float] = {}
+    for ngram_size in (3, 2, 1):
+        for index in range(len(tokens) - ngram_size + 1):
+            phrase_tokens = tokens[index : index + ngram_size]
+            if len(set(phrase_tokens)) == 1 and ngram_size > 1:
+                continue
+            phrase = " ".join(phrase_tokens)
+            scores[phrase] = scores.get(phrase, 0.0) + 1.0 + ((ngram_size - 1) * 0.35)
+    ranked = sorted(scores.items(), key=lambda item: (item[1], len(item[0])), reverse=True)
+    selected: list[str] = []
+    for phrase, _score in ranked:
+        if any(phrase in existing or existing in phrase for existing in selected):
+            continue
+        selected.append(phrase)
+        if len(selected) >= limit:
+            break
+    return selected
 
 
 def keyword_overlap_score(text: str, keywords: Sequence[str]) -> float:
