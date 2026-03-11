@@ -130,6 +130,18 @@ class UIViewModelTests(unittest.TestCase):
         self.assertTrue(config.log_http_requests)
         self.assertTrue(config.log_screening_decisions)
 
+    def test_default_form_values_start_review_setup_blank(self) -> None:
+        values = default_form_values()
+
+        self.assertEqual(values["research_topic"], "")
+        self.assertEqual(values["research_question"], "")
+        self.assertEqual(values["review_objective"], "")
+        self.assertEqual(values["search_keywords"], "")
+        self.assertEqual(values["inclusion_criteria"], "")
+        self.assertEqual(values["exclusion_criteria"], "")
+        self.assertEqual(values["banned_topics"], "")
+        self.assertEqual(values["excluded_title_terms"], "")
+
     def test_profile_manager_round_trips_json_profiles(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             manager = ProfileManager(Path(temp_dir))

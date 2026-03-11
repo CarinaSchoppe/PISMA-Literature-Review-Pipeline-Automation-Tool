@@ -331,7 +331,7 @@ class PipelineController:
         run_error: str | None = None,
         emit_completed_event: bool = True,
         extra_result_fields: dict[str, Any] | None = None,
-    ) -> dict[str, str | int]:
+    ) -> dict[str, Any]:
         """Generate reports, emit artifact events, and build the final result payload."""
 
         stats = self._build_report_stats(
@@ -348,6 +348,7 @@ class PipelineController:
             self._emit_event("run_completed", stage="pipeline", report_paths=report_paths)
         return {
             **report_paths,
+            "papers_snapshot": [self._serialize_paper_snapshot(paper) for paper in final_papers],
             "discovered_count": discovered_count,
             "deduplicated_count": deduplicated_count,
             "database_count": len(final_papers),
@@ -379,6 +380,11 @@ class PipelineController:
             "run_mode": self.config.run_mode,
             "partial_rerun_mode": self.config.partial_rerun_mode,
         }
+
+    def _serialize_paper_snapshot(self, paper: PaperMetadata) -> dict[str, Any]:
+        """Return one JSON-safe paper payload for UI result refresh fallbacks."""
+
+        return paper.model_dump(mode="json")
 
     def _discover(self) -> list[PaperMetadata]:
         """Collect metadata from fixtures, manual imports, and enabled API clients."""

@@ -7,6 +7,7 @@ import tkinter as tk
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -119,6 +120,18 @@ class DesktopWorkbenchTests(unittest.TestCase):
         self.assertEqual(values["research_question"], "")
         self.assertEqual(values["settings_search"], "")
 
+    def test_review_setup_defaults_are_empty_until_user_enters_values(self) -> None:
+        values = self.workbench._collect_form_values()
+
+        self.assertEqual(values["research_topic"], "")
+        self.assertEqual(values["research_question"], "")
+        self.assertEqual(values["review_objective"], "")
+        self.assertEqual(values["search_keywords"], "")
+        self.assertEqual(values["inclusion_criteria"], "")
+        self.assertEqual(values["exclusion_criteria"], "")
+        self.assertEqual(values["banned_topics"], "")
+        self.assertEqual(values["excluded_title_terms"], "")
+
     def test_guided_text_validation_reports_missing_topic_and_empty_keyword_list(self) -> None:
         messages = self.workbench._validate_guided_text_inputs(
             {
@@ -213,6 +226,36 @@ class DesktopWorkbenchTests(unittest.TestCase):
         )
         self.assertIn("Model provider and pass chain", tuple(self.workbench.quick_destination_combo["values"]))
         self.assertIn("Output guide", tuple(self.workbench.guide_choice_combo["values"]))
+
+    def test_settings_panes_allow_manual_resize_without_snapping_back(self) -> None:
+        paned = self.workbench.settings_panedwindow
+        self.assertIsNotNone(paned)
+        self.assertEqual(str(paned.cget("cursor")), "sb_h_double_arrow")
+
+        self.workbench.settings_panes_initialized = True
+        self.workbench.settings_panes_user_resized = True
+        self.workbench.settings_panes_mode = self.workbench.compact_window_mode.get()
+        first_sash = paned.sashpos(0)
+        second_sash = paned.sashpos(1)
+
+        self.workbench._apply_default_settings_pane_positions()
+
+        self.assertEqual(paned.sashpos(0), first_sash)
+        self.assertEqual(paned.sashpos(1), second_sash)
+
+    def test_settings_overview_toggle_persists_across_layout_refreshes(self) -> None:
+        self.workbench.settings_mode_var.set("advanced")
+        self.workbench.compact_window_mode.set(False)
+        self.workbench._apply_settings_mode()
+        self.workbench._toggle_settings_overview()
+
+        self.workbench.root.update_idletasks()
+        self.assertFalse(bool(self.workbench.settings_overview_content and self.workbench.settings_overview_content.winfo_ismapped()))
+
+        self.workbench._apply_responsive_layout()
+
+        self.workbench.root.update_idletasks()
+        self.assertFalse(bool(self.workbench.settings_overview_content and self.workbench.settings_overview_content.winfo_ismapped()))
 
     def test_workbench_includes_charts_history_audit_and_artifact_browser_widgets(self) -> None:
         notebook_labels = [self.workbench.notebook.tab(tab_id, "text") for tab_id in self.workbench.notebook.tabs()]
@@ -328,6 +371,27 @@ class DesktopWorkbenchTests(unittest.TestCase):
         self.assertIn("[INC] Include", self.workbench.document_decision_badge.cget("text"))
         self.assertIn("[SRC] fixture", self.workbench.document_source_badge.cget("text"))
 
+    def test_document_external_button_uses_stored_document_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            pdf_path = Path(temp_dir) / "paper.pdf"
+            pdf_path.write_bytes(b"%PDF-1.4\n%mock pdf\n")
+
+            self.workbench._show_document_preview(
+                {
+                    "title": "Preview paper",
+                    "abstract": "Preview abstract",
+                    "source": "fixture",
+                    "inclusion_decision": "include",
+                    "pdf_path": str(pdf_path),
+                },
+                source_label="fixture",
+            )
+
+            with patch.object(self.workbench, "_open_path") as open_path:
+                self.workbench._open_document_external()
+
+            open_path.assert_called_once_with(pdf_path)
+
     def test_result_tables_render_visible_decision_badges(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             csv_path = Path(temp_dir) / "papers.csv"
@@ -352,43 +416,44 @@ class DesktopWorkbenchTests(unittest.TestCase):
     def test_compact_and_advanced_settings_modes_toggle_helper_density(self) -> None:
         intro_label = self.workbench.settings_page_intro_labels["Review Setup"]
         summary_label = self.workbench.settings_section_summary_labels["Review Brief"]
-
         self.assertEqual(intro_label.winfo_manager(), "")
         self.assertEqual(summary_label.winfo_manager(), "")
-        self.assertEqual(self.workbench.workspace_overview_content.winfo_manager(), "")
-        self.assertEqual(self.workbench.settings_overview_content.winfo_manager(), "")
-        self.assertEqual(self.workbench.settings_page_description_label.winfo_manager(), "")
+        self.assertEqual(str(self.workbench.workspace_overview_toggle_button.cget("text")), "Show workspace overview")
+        self.assertEqual(str(self.workbench.settings_overview_toggle_button.cget("text")), "Show page overview")
 
         self.workbench.settings_mode_var.set("advanced")
+        self.workbench.compact_window_mode.set(False)
         self.workbench._apply_settings_mode()
         self.workbench._apply_workspace_overview_visibility(True)
         self.workbench._apply_settings_overview_visibility(True)
 
         self.assertEqual(intro_label.winfo_manager(), "grid")
         self.assertEqual(summary_label.winfo_manager(), "grid")
-        self.assertEqual(self.workbench.workspace_overview_content.winfo_manager(), "grid")
-        self.assertEqual(self.workbench.settings_overview_content.winfo_manager(), "grid")
-        self.assertEqual(self.workbench.settings_page_description_label.winfo_manager(), "grid")
+        self.assertEqual(str(self.workbench.workspace_overview_toggle_button.cget("text")), "Hide workspace overview")
+        self.assertEqual(str(self.workbench.settings_overview_toggle_button.cget("text")), "Hide page overview")
 
     def test_overview_toggles_and_small_window_mode_keep_editing_area_visible(self) -> None:
         self.workbench.settings_mode_var.set("advanced")
+        self.workbench.compact_window_mode.set(False)
         self.workbench._apply_settings_mode()
         self.workbench._apply_workspace_overview_visibility(True)
         self.workbench._apply_settings_overview_visibility(True)
-        self.assertEqual(self.workbench.workspace_overview_content.winfo_manager(), "grid")
-        self.assertEqual(self.workbench.settings_overview_content.winfo_manager(), "grid")
+        self.assertEqual(str(self.workbench.workspace_overview_toggle_button.cget("text")), "Hide workspace overview")
+        self.assertEqual(str(self.workbench.settings_overview_toggle_button.cget("text")), "Hide page overview")
 
         self.workbench._toggle_workspace_overview()
         self.workbench._toggle_settings_overview()
-        self.assertEqual(self.workbench.workspace_overview_content.winfo_manager(), "")
-        self.assertEqual(self.workbench.settings_overview_content.winfo_manager(), "")
+        self.assertEqual(self.workbench.workspace_overview_user_visible, False)
+        self.assertEqual(self.workbench.settings_overview_user_visible, False)
+        self.assertEqual(str(self.workbench.workspace_overview_toggle_button.cget("text")), "Show workspace overview")
+        self.assertEqual(str(self.workbench.settings_overview_toggle_button.cget("text")), "Show page overview")
 
         self.workbench.root.geometry("980x680")
         self.workbench.root.update_idletasks()
         self.workbench._apply_responsive_layout()
         self.assertTrue(self.workbench.compact_window_mode.get())
-        self.assertEqual(self.workbench.workspace_overview_content.winfo_manager(), "")
-        self.assertEqual(self.workbench.settings_overview_content.winfo_manager(), "")
+        self.assertEqual(str(self.workbench.workspace_overview_toggle_button.cget("text")), "Show workspace overview")
+        self.assertEqual(str(self.workbench.settings_overview_toggle_button.cget("text")), "Show page overview")
         self.assertEqual(self.workbench.settings_page_description_label.winfo_manager(), "")
 
     def test_advanced_settings_page_is_hidden_until_requested(self) -> None:

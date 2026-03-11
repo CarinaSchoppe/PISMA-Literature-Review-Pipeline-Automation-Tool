@@ -267,7 +267,7 @@ class DesktopWorkbenchWorkflowTests(unittest.TestCase):
         self.assertTrue(direct_controller.stop_called)
 
         with patch("ui.desktop_app.PipelineController", FakeController), patch("ui.desktop_app.threading.Thread", FakeThread), patch.object(
-            self.workbench, "_load_dataframe_into_tree"
+            self.workbench, "_load_records_into_tree"
         ) as load_table, patch.object(self.workbench, "_load_outputs") as load_outputs:
             self.workbench._start_run()
             with patch.object(self.workbench.root, "after", return_value=None):
@@ -333,6 +333,49 @@ class DesktopWorkbenchWorkflowTests(unittest.TestCase):
                 }
             )
         showwarning.assert_called_once()
+
+    def test_handle_result_can_populate_all_papers_from_snapshot_and_reset_filters(self) -> None:
+        config = SimpleNamespace(results_dir=Path("results"))
+        self.workbench.all_filter_var.set("screened_only")
+        self.workbench._set_placeholder_text("all_papers_search", "old hidden filter")
+
+        with patch.object(self.workbench, "_load_outputs"), patch.object(self.workbench, "_refresh_chart_preview"), patch.object(
+            self.workbench, "_refresh_screening_audit"
+        ), patch.object(self.workbench, "_append_run_history"):
+            self.workbench._handle_result(
+                {
+                    "config": config,
+                    "result": {
+                        "run_status": "completed",
+                        "papers_snapshot": [
+                            {
+                                "title": "Paper A",
+                                "authors": ["Ada"],
+                                "abstract": "alpha",
+                                "venue": "Venue",
+                                "doi": "10.1/a",
+                                "inclusion_decision": "include",
+                                "relevance_score": 72.0,
+                            },
+                            {
+                                "title": "Paper B",
+                                "authors": ["Bob"],
+                                "abstract": "beta",
+                                "venue": "Venue",
+                                "doi": "10.1/b",
+                                "inclusion_decision": "exclude",
+                                "relevance_score": 40.0,
+                            },
+                        ],
+                    },
+                }
+            )
+
+        self.assertEqual(self.workbench.all_filter_var.get(), "all")
+        self.assertEqual(self.workbench._placeholder_safe_value("all_papers_search", self.workbench.all_search_var.get()), "")
+        self.assertEqual(len(self.workbench.treeviews["all_papers"].get_children()), 2)
+        self.assertEqual(len(self.workbench.treeviews["included_papers"].get_children()), 1)
+        self.assertEqual(len(self.workbench.treeviews["excluded_papers"].get_children()), 1)
 
     def test_run_history_is_written_and_rendered(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

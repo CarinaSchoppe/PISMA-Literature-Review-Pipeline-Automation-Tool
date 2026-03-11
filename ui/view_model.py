@@ -11,14 +11,14 @@ from config import ResearchConfig, parse_analysis_pass
 PROFILE_DIR = Path("configs/profiles")
 
 MULTILINE_FIELD_DEFAULTS = {
-    "research_topic": "AI-assisted literature review",
+    "research_topic": "",
     "research_question": "",
     "review_objective": "",
-    "search_keywords": "large language models, systematic review",
+    "search_keywords": "",
     "inclusion_criteria": "",
     "exclusion_criteria": "",
     "banned_topics": "",
-    "excluded_title_terms": "correction; erratum; editorial; retraction",
+    "excluded_title_terms": "",
     "analysis_passes": "",
 }
 

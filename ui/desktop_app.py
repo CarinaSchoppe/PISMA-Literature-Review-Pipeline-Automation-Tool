@@ -1310,6 +1310,10 @@ class DesktopWorkbench:
         self.workspace_overview_toggle_button: ttk.Button | None = None
         self.settings_overview_content: ttk.Frame | None = None
         self.settings_overview_toggle_button: ttk.Button | None = None
+        self.workspace_overview_visible = False
+        self.settings_overview_visible = False
+        self.workspace_overview_user_visible: bool | None = None
+        self.settings_overview_user_visible: bool | None = None
         self.settings_page_description_label: ttk.Label | None = None
         self.settings_page_frames: dict[str, ttk.Frame] = {}
         self.settings_page_content_frames: dict[str, ttk.Frame] = {}
@@ -1357,6 +1361,9 @@ class DesktopWorkbench:
         self.hover_help_enabled = tk.BooleanVar(value=True)
         self.show_advanced_settings = tk.BooleanVar(value=bool(self.form_values.get("ui_show_advanced_settings", False)))
         self.compact_window_mode = tk.BooleanVar(value=True)
+        self.settings_panes_initialized = False
+        self.settings_panes_user_resized = False
+        self.settings_panes_mode: bool | None = None
         self.is_closing = False
         self.hover_tooltip = HoverTooltip(self.root)
         self._hover_message_active = False
@@ -1386,6 +1393,7 @@ class DesktopWorkbench:
         self.document_pdf_page_index = 0
         self.document_pdf_zoom = 1.0
         self.document_photo_image: Any | None = None
+        self.document_external_path: Path | None = None
         self.run_history_status_badge_var = tk.StringVar(value="[RUN] No runs")
         self.run_history_mode_badge_var = tk.StringVar(value="[MODE] Waiting")
         self.run_history_artifact_badge_var = tk.StringVar(value="[ART] No artifacts")
@@ -2122,8 +2130,20 @@ class DesktopWorkbench:
                 self.settings_page_description_label.grid()
             else:
                 self.settings_page_description_label.grid_remove()
-        self._apply_workspace_overview_visibility(advanced_mode and not self.compact_window_mode.get())
-        self._apply_settings_overview_visibility(advanced_mode and not self.compact_window_mode.get())
+        compact_window = self.compact_window_mode.get()
+        default_overview_visibility = advanced_mode and not compact_window
+        workspace_overview_visible = (
+            default_overview_visibility
+            if self.workspace_overview_user_visible is None
+            else self.workspace_overview_user_visible and not compact_window
+        )
+        settings_overview_visible = (
+            default_overview_visibility
+            if self.settings_overview_user_visible is None
+            else self.settings_overview_user_visible and not compact_window
+        )
+        self._apply_workspace_overview_visibility(workspace_overview_visible)
+        self._apply_settings_overview_visibility(settings_overview_visible)
         mode_message = (
             "Advanced settings mode enabled. Section descriptions remain visible for deeper orientation."
             if advanced_mode
@@ -2154,6 +2174,7 @@ class DesktopWorkbench:
     def _apply_workspace_overview_visibility(self, visible: bool) -> None:
         """Show or collapse the large workspace overview at the top of the app."""
 
+        self.workspace_overview_visible = visible
         self._set_collapsible_section_visibility(
             self.workspace_overview_content,
             self.workspace_overview_toggle_button,
@@ -2165,6 +2186,7 @@ class DesktopWorkbench:
     def _apply_settings_overview_visibility(self, visible: bool) -> None:
         """Show or collapse the large settings overview in the settings tab."""
 
+        self.settings_overview_visible = visible
         self._set_collapsible_section_visibility(
             self.settings_overview_content,
             self.settings_overview_toggle_button,
@@ -2176,13 +2198,15 @@ class DesktopWorkbench:
     def _toggle_workspace_overview(self) -> None:
         """Invert the workspace overview visibility."""
 
-        is_visible = bool(self.workspace_overview_content and self.workspace_overview_content.winfo_manager())
+        is_visible = self.workspace_overview_visible
+        self.workspace_overview_user_visible = not is_visible
         self._apply_workspace_overview_visibility(not is_visible)
 
     def _toggle_settings_overview(self) -> None:
         """Invert the settings overview visibility."""
 
-        is_visible = bool(self.settings_overview_content and self.settings_overview_content.winfo_manager())
+        is_visible = self.settings_overview_visible
+        self.settings_overview_user_visible = not is_visible
         self._apply_settings_overview_visibility(not is_visible)
 
     def _apply_default_settings_pane_positions(self) -> None:
@@ -2191,17 +2215,33 @@ class DesktopWorkbench:
         self.settings_pane_after_id = None
         if self.settings_panedwindow is None:
             return
+        current_mode = bool(self.compact_window_mode.get())
+        if (
+            self.settings_panes_initialized
+            and self.settings_panes_user_resized
+            and self.settings_panes_mode == current_mode
+        ):
+            return
         try:
             if not self.settings_panedwindow.winfo_exists():
                 return
             self.settings_panedwindow.update_idletasks()
             width = max(int(self.settings_panedwindow.winfo_width() or 0), 920)
-            left_width = 210 if self.compact_window_mode.get() else 240
-            right_width = 300 if self.compact_window_mode.get() else 340
+            left_width = 210 if current_mode else 240
+            right_width = 300 if current_mode else 340
             self.settings_panedwindow.sashpos(0, left_width)
             self.settings_panedwindow.sashpos(1, max(left_width + 280, width - right_width))
+            self.settings_panes_initialized = True
+            self.settings_panes_mode = current_mode
         except (tk.TclError, RuntimeError, RecursionError):
             return
+
+    def _handle_settings_pane_user_resize(self, _event: tk.Event | None = None) -> None:
+        """Remember that the user manually resized the settings panes so defaults do not snap back."""
+
+        self.settings_panes_user_resized = True
+        self.settings_panes_initialized = True
+        self.settings_panes_mode = bool(self.compact_window_mode.get())
 
     def _apply_responsive_layout(self, *_args: Any) -> None:
         """Compact the large overview blocks when the window is not tall enough for them."""
@@ -2215,13 +2255,28 @@ class DesktopWorkbench:
         width = int(self.root.winfo_width() or 0)
         height = int(self.root.winfo_height() or 0)
         compact_window = width < 1280 or height < 820
+        previous_compact_window = bool(self.compact_window_mode.get())
         self.compact_window_mode.set(compact_window)
+        if previous_compact_window != compact_window:
+            self.settings_panes_initialized = False
+            self.settings_panes_user_resized = False
+            self.settings_panes_mode = compact_window
         advanced_mode = self.settings_mode_var.get() == "advanced"
-        show_large_overviews = advanced_mode and not compact_window
-        self._apply_workspace_overview_visibility(show_large_overviews)
-        self._apply_settings_overview_visibility(show_large_overviews)
+        default_overview_visibility = advanced_mode and not compact_window
+        workspace_overview_visible = (
+            default_overview_visibility
+            if self.workspace_overview_user_visible is None
+            else self.workspace_overview_user_visible and not compact_window
+        )
+        settings_overview_visible = (
+            default_overview_visibility
+            if self.settings_overview_user_visible is None
+            else self.settings_overview_user_visible and not compact_window
+        )
+        self._apply_workspace_overview_visibility(workspace_overview_visible)
+        self._apply_settings_overview_visibility(settings_overview_visible)
         if self.settings_page_description_label is not None:
-            if show_large_overviews:
+            if settings_overview_visible:
                 self.settings_page_description_label.grid()
             else:
                 self.settings_page_description_label.grid_remove()
@@ -2589,9 +2644,10 @@ class DesktopWorkbench:
             "Collapse or expand the large settings overview so the real editing canvas gets more vertical space.",
         )
 
-        shell_panes = ttk.Panedwindow(container, orient="horizontal")
+        shell_panes = ttk.Panedwindow(container, orient="horizontal", cursor="sb_h_double_arrow")
         shell_panes.grid(row=1, column=0, sticky="nsew")
         self.settings_panedwindow = shell_panes
+        shell_panes.bind("<ButtonRelease-1>", self._handle_settings_pane_user_resize, add="+")
 
         left_sidebar = ttk.Frame(shell_panes, padding=12, style="Sidebar.TFrame")
         left_sidebar.rowconfigure(1, weight=1)
@@ -5731,12 +5787,18 @@ class DesktopWorkbench:
             messagebox.showwarning("Run stopped", run_error)
         elif status != "completed" and run_error:
             messagebox.showerror(f"Run status: {status}", run_error)
+        self.all_filter_var.set("all")
+        self.all_search_var.set("")
+        self._set_placeholder_text("all_papers_search", "")
         papers_path = Path(str(result.get("papers_csv", config.results_dir / "papers.csv")))
         included_path = Path(str(result.get("included_papers_csv", config.results_dir / "included_papers.csv")))
         excluded_path = Path(str(result.get("excluded_papers_csv", config.results_dir / "excluded_papers.csv")))
-        self._load_dataframe_into_tree("all_papers", papers_path)
-        self._load_dataframe_into_tree("included_papers", included_path)
-        self._load_dataframe_into_tree("excluded_papers", excluded_path)
+        papers_snapshot = list(result.get("papers_snapshot", []) or [])
+        included_snapshot = [record for record in papers_snapshot if str(record.get("inclusion_decision", "")).strip().lower() == "include"]
+        excluded_snapshot = [record for record in papers_snapshot if str(record.get("inclusion_decision", "")).strip().lower() == "exclude"]
+        self._load_records_into_tree("all_papers", papers_snapshot, path_hint=papers_path)
+        self._load_records_into_tree("included_papers", included_snapshot, path_hint=included_path)
+        self._load_records_into_tree("excluded_papers", excluded_snapshot, path_hint=excluded_path)
         self._load_outputs(result)
         self._refresh_chart_preview(papers_path)
         self._refresh_screening_audit(papers_path)
@@ -5762,14 +5824,39 @@ class DesktopWorkbench:
     def _load_dataframe_into_tree(self, key: str, path: Path) -> None:
         """Load a CSV file into one of the result tables."""
 
+        if path.exists():
+            dataframe = pd.read_csv(path)
+            self._populate_tree_from_dataframe(key, dataframe)
+            return
+        self._clear_tree_widget(key)
+
+    def _load_records_into_tree(self, key: str, records: list[dict[str, Any]], *, path_hint: Path | None = None) -> None:
+        """Load one result table from CSV when available, otherwise from an in-memory snapshot."""
+
+        if path_hint is not None and path_hint.exists():
+            self._load_dataframe_into_tree(key, path_hint)
+            return
+        if not records:
+            self._clear_tree_widget(key)
+            return
+        self._populate_tree_from_dataframe(key, pd.DataFrame(records))
+
+    def _clear_tree_widget(self, key: str) -> None:
+        """Remove all rows and columns from one tree widget."""
+
         tree = self.treeviews[key]
         self.table_rows[key] = {}
         for item in tree.get_children():
             tree.delete(item)
-        if not path.exists():
-            tree["columns"] = ()
-            return
-        dataframe = pd.read_csv(path)
+        tree["columns"] = ()
+
+    def _populate_tree_from_dataframe(self, key: str, dataframe: pd.DataFrame) -> None:
+        """Render one dataframe into the target tree widget using the current UI filters."""
+
+        tree = self.treeviews[key]
+        self.table_rows[key] = {}
+        for item in tree.get_children():
+            tree.delete(item)
         if key == "all_papers":
             dataframe = self._filter_all_papers(dataframe)
         columns = list(dataframe.columns[:12])
@@ -6319,6 +6406,7 @@ class DesktopWorkbench:
         else:
             self.document_status_var.set("No linked local document found. Showing the best available metadata/text preview.")
             self._clear_document_render("No local PDF available for embedded rendering.")
+        self.document_external_path = document_path if document_path is not None and document_path.exists() else None
         decision_text, decision_tone = self._decision_badge_text(str(row.get("inclusion_decision", "") or ""))
         self._set_badge_label(self.document_decision_badge, decision_text, decision_tone)
         source_value = str(row.get("source", "") or "").strip() or "Unknown source"
@@ -6495,6 +6583,7 @@ class DesktopWorkbench:
         self.document_pdf_page_index = 0
         self.document_pdf_zoom = 1.0
         self.document_photo_image = None
+        self.document_external_path = None
         self.document_page_var.set("Page 0 / 0")
         self.document_render_status_var.set(status_text)
         self._set_badge_label(self.document_file_badge, "[FILE] No local file", "muted")
@@ -6580,13 +6669,9 @@ class DesktopWorkbench:
     def _open_document_external(self) -> None:
         """Open the currently linked document outside the app when one is available."""
 
-        status_text = self.document_status_var.get()
-        if not status_text.startswith("Linked local document: "):
+        if self.document_external_path is None:
             return
-        candidate = status_text.removeprefix("Linked local document: ").strip()
-        if not candidate:
-            return
-        self._open_path(Path(candidate))
+        self._open_path(self.document_external_path)
 
     def _open_path(self, path: Path) -> None:
         """Open a file or directory using the host operating system defaults."""
