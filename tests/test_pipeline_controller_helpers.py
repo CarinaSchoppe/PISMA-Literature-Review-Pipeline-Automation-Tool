@@ -714,7 +714,9 @@ class PipelineControllerHelperTests(unittest.TestCase):
             finally:
                 controller.close()
 
-            no_pass_controller = PipelineController(self._config(root, run_mode="collect"))
+            no_pass_controller = PipelineController(
+                self._config(root, run_mode="collect", verbosity="normal")
+            )
             try:
                 with self.assertRaises(ValueError):
                     no_pass_controller._screen_paper_with_passes(PaperMetadata(title="No passes", source="fixture"))
