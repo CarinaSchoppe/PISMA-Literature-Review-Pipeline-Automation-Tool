@@ -231,7 +231,7 @@ class ResearchConfig(BaseModel):
     decision_mode: Literal["strict", "triage"] = "strict"
     maybe_threshold_margin: float = 10.0
     run_mode: Literal["collect", "analyze"] = "analyze"
-    verbosity: Literal["normal", "verbose", "ultra_verbose"] = "normal"
+    verbosity: Literal["normal", "verbose", "ultra_verbose"] = "ultra_verbose"
     output_csv: bool = True
     output_json: bool = True
     output_markdown: bool = True
@@ -371,9 +371,6 @@ class ResearchConfig(BaseModel):
 
         return parse_search_terms(value)
 
-
-
-
     @field_validator("analysis_passes", mode="before")
     @classmethod
     def validate_analysis_passes(cls, value: Any) -> list[AnalysisPassConfig]:
@@ -407,7 +404,6 @@ class ResearchConfig(BaseModel):
         if value < year_start:
             raise ValueError("year_range_end must be greater than or equal to year_range_start")
         return value
-
 
     @field_validator("topic_prefilter_high_threshold", "topic_prefilter_review_threshold")
     @classmethod
