@@ -72,9 +72,11 @@ class AIScreenerTests(unittest.TestCase):
 
         screener = AIScreener(config)
         result = screener.screen(paper)
+        topic_match = screener.scorer.evaluate_topic_match(paper)
         expected = screener.scorer.deep_score(
             paper,
-            stage_one_decision=screener.scorer.quick_screen(paper),
+            stage_one_decision=screener.scorer.quick_screen(paper, topic_match=topic_match),
+            topic_match=topic_match,
         )
 
         self.assertEqual(result.relevance_score, expected.relevance_score)
@@ -91,9 +93,11 @@ class AIScreenerTests(unittest.TestCase):
         ):
             screener = AIScreener(config)
             result = screener.screen(paper)
+            topic_match = screener.scorer.evaluate_topic_match(paper)
             expected = screener.scorer.deep_score(
                 paper,
-                stage_one_decision=screener.scorer.quick_screen(paper),
+                stage_one_decision=screener.scorer.quick_screen(paper, topic_match=topic_match),
+                topic_match=topic_match,
             )
 
         self.assertEqual(result.relevance_score, expected.relevance_score)
@@ -153,7 +157,12 @@ class AIScreenerTests(unittest.TestCase):
                 with patch("analysis.ai_screener.build_llm_client", return_value=fake_client):
                     screener = AIScreener(config)
                     result = screener.screen(paper)
-                    expected = screener.scorer.deep_score(paper, stage_one_decision="include")
+                    topic_match = screener.scorer.evaluate_topic_match(paper)
+                    expected = screener.scorer.deep_score(
+                        paper,
+                        stage_one_decision="include",
+                        topic_match=topic_match,
+                    )
                 self.assertEqual(result.decision, expected.decision)
                 self.assertEqual(result.relevance_score, expected.relevance_score)
 
