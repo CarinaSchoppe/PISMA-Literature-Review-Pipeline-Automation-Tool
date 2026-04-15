@@ -233,10 +233,6 @@ class HuggingFaceLocalLLMClient(BaseLLMClient):
 
         if not self.enabled or self._generator is None:
             return LLMResponse()
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
         generation_kwargs: dict[str, Any] = {
             "max_new_tokens": self.max_new_tokens,
             "return_full_text": False,
@@ -247,7 +243,6 @@ class HuggingFaceLocalLLMClient(BaseLLMClient):
         else:
             generation_kwargs["do_sample"] = False
         try:
-            output = self._generator
             return LLMResponse(
             )
         except Exception as exc:  # noqa: BLE001

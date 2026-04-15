@@ -397,10 +397,6 @@ class FeatureBranchCoverageTests(unittest.TestCase):
         http.configure_http_runtime(
             cache_enabled=True,
             cache_dir=self.temp_dir.name,
-            cache_ttl_seconds=60,
-            retry_max_attempts=4,
-            retry_base_delay_seconds=2.0,
-            retry_max_delay_seconds=30.0,
         )
         self.assertEqual(http._calculate_backoff_delay(response, 3, strategy="fixed"), 2.0)
         self.assertEqual(http._calculate_backoff_delay(response, 3, strategy="linear"), 6.0)
@@ -563,7 +559,7 @@ class FeatureBranchCoverageTests(unittest.TestCase):
         self.assertIn("No benchmarks executed", text)
         self.assertEqual(payload["summary"]["benchmarks_executed"], 0)
         with self.assertRaises(KeyError):
-            _build_case({}, "missing", lambda _root: 0)
+            _build_case({}, "missing")
         with patch("benchmark_report.run_benchmark_report", return_value=0):
             with self.assertRaises(SystemExit) as exc:
                 benchmark_main()

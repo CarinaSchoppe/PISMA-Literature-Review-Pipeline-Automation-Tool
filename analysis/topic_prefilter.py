@@ -9,7 +9,7 @@ from typing import Any, ClassVar, Literal
 
 from config import ResearchConfig, TopicKeywordRuleConfig
 from models.paper import PaperMetadata
-from utils.text_processing import extract_keyphrases, keyword_overlap_score, normalize_title
+from utils.text_processing import extract_keyphrases, normalize_title
 
 LOGGER = logging.getLogger(__name__)
 TopicPrefilterLabel = Literal["HIGH_RELEVANCE", "REVIEW", "LOW_RELEVANCE"]
@@ -226,7 +226,7 @@ class LocalTopicMatcher(BaseTopicMatcher):
         research_fit_label = self._classify_research_fit(weighted_keyword_score, matched_keyword_count)
         try:
             LOGGER.debug("Local topic prefilter embedding generation started for '%s'.", paper.title)
-            review_embedding, paper_embedding = self._embed_texts([self._review_text, paper_text])
+            review_embedding, paper_embedding = self._embed_texts()
             LOGGER.debug("Local topic prefilter embedding generation finished for '%s'.", paper.title)
             cosine_similarity = float((review_embedding * paper_embedding).sum().item())
             similarity = max(0.0, min(1.0, cosine_similarity))
@@ -242,16 +242,6 @@ class LocalTopicMatcher(BaseTopicMatcher):
             similarity,
             classification,
             research_fit_label,
-        )
-        keyword_overlap = keyword_overlap_score(
-            paper_text,
-            [
-                self.config.research_topic,
-                self.config.research_question,
-                self.config.review_objective,
-                *self.config.search_keywords,
-                *self.config.inclusion_criteria,
-            ],
         )
         rule_gate_failed = (
                 research_fit_label == "WEAK_FIT"
@@ -495,7 +485,7 @@ class LocalTopicMatcher(BaseTopicMatcher):
         normalized = text.strip()
         if normalized in self._text_embedding_cache:
             return self._text_embedding_cache[normalized]
-        embeddings = self._embed_texts([normalized])
+        embeddings = self._embed_texts()
         if len(embeddings) != 1:
             raise RuntimeError("Unexpected embedding batch shape for single-text lookup.")
         self._text_embedding_cache[normalized] = embeddings[0]
@@ -525,7 +515,7 @@ class LocalTopicMatcher(BaseTopicMatcher):
             return "REVIEW"
         return "LOW_RELEVANCE"
 
-    def _embed_texts(self, texts: list[str]) -> Any:
+    def _embed_texts(self) -> Any:
         """Encode and normalize text embeddings for cosine similarity scoring."""
 
         assert self._tokenizer is not None

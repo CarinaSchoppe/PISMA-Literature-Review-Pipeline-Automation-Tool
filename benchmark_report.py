@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import statistics
 import sys
 import time
 from dataclasses import dataclass
@@ -114,22 +113,18 @@ def build_default_cases(baselines: dict[str, dict[str, Any]]) -> list[BenchmarkC
         _build_case(
             baselines,
             "fixture_discovery_search",
-            _benchmark_fixture_discovery_search,
         ),
         _build_case(
             baselines,
             "deduplicate_fixture_batch",
-            _benchmark_deduplicate_fixture_batch,
         ),
         _build_case(
             baselines,
             "manual_import_csv_load",
-            _benchmark_manual_import_csv_load,
         ),
         _build_case(
             baselines,
             "query_variant_building",
-            _benchmark_query_variant_building,
         ),
     ]
 
@@ -137,7 +132,6 @@ def build_default_cases(baselines: dict[str, dict[str, Any]]) -> list[BenchmarkC
 def _build_case(
         baselines: dict[str, dict[str, Any]],
         name: str,
-        runner: BenchmarkCallable,
 ) -> BenchmarkCase:
     """Construct a benchmark case from the shared baseline configuration."""
 
@@ -172,7 +166,6 @@ def run_benchmark_suite(
                 completed += int(case.runner(project_root))
             measurements.append(time.perf_counter() - started)
 
-        average_seconds = statistics.fmean(measurements)
         results.append(
             BenchmarkResult(
             )

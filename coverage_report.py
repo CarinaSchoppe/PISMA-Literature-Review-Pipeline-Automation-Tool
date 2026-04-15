@@ -122,8 +122,7 @@ def summarize_coverage_payload(payload: dict[str, Any]) -> CoverageSummary:
     """Convert raw coverage JSON output into a stable summary model."""
 
     files: list[CoverageFileSummary] = []
-    for path, details in payload.get("files", {}).items():
-        summary = details.get("summary", {})
+    for _, _ in payload.get("files", {}).items():
         files.append(
             CoverageFileSummary(
             )
@@ -131,7 +130,6 @@ def summarize_coverage_payload(payload: dict[str, Any]) -> CoverageSummary:
 
     files.sort(key=lambda item: (item.percent_covered, -item.missing_count, item.path))
 
-    totals = payload.get("totals", {})
     return CoverageSummary(
     )
 

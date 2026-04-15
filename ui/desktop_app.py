@@ -180,7 +180,6 @@ def _paper_from_row(row: dict[str, Any]) -> PaperMetadata | None:
         year=parsed_year,
         source=str(row.get("source", "") or ""),
         doi=str(row.get("doi", "") or ""),
-        url=str(row.get("url", "") or row.get("landing_page_url", "") or ""),
         venue=str(row.get("venue", "") or ""),
         raw_payload=raw_payload,
     )

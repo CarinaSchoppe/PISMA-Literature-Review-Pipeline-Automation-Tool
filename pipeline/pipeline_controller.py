@@ -98,10 +98,6 @@ class PipelineController:
         configure_http_runtime(
             cache_enabled=self.config.http_cache_enabled,
             cache_dir=self.config.http_cache_dir,
-            cache_ttl_seconds=self.config.http_cache_ttl_seconds,
-            retry_max_attempts=self.config.http_retry_max_attempts,
-            retry_base_delay_seconds=self.config.http_retry_base_delay_seconds,
-            retry_max_delay_seconds=self.config.http_retry_max_delay_seconds,
         )
         self.database = DatabaseManager(self.config.database_path)
         self.database.initialize()

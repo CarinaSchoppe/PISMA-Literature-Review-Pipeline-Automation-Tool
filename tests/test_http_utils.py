@@ -78,10 +78,6 @@ class HTTPUtilsTests(unittest.TestCase):
         http.configure_http_runtime(
             cache_enabled=False,
             cache_dir=self.temp_dir.name,
-            cache_ttl_seconds=3600,
-            retry_max_attempts=4,
-            retry_base_delay_seconds=1.0,
-            retry_max_delay_seconds=30.0,
         )
 
     def tearDown(self) -> None:
@@ -145,10 +141,6 @@ class HTTPUtilsTests(unittest.TestCase):
         http.configure_http_runtime(
             cache_enabled=True,
             cache_dir=self.temp_dir.name,
-            cache_ttl_seconds=120,
-            retry_max_attempts=7,
-            retry_base_delay_seconds=2.5,
-            retry_max_delay_seconds=12.0,
         )
 
         self.assertTrue(http.HTTP_RUNTIME_CONFIG.cache_enabled)
@@ -199,10 +191,6 @@ class HTTPUtilsTests(unittest.TestCase):
         http.configure_http_runtime(
             cache_enabled=True,
             cache_dir=self.temp_dir.name,
-            cache_ttl_seconds=3600,
-            retry_max_attempts=4,
-            retry_base_delay_seconds=1.0,
-            retry_max_delay_seconds=30.0,
         )
         session = Mock()
         session.request.return_value = FakeResponse(payload={"cached": True})
@@ -218,10 +206,6 @@ class HTTPUtilsTests(unittest.TestCase):
         http.configure_http_runtime(
             cache_enabled=True,
             cache_dir=self.temp_dir.name,
-            cache_ttl_seconds=3600,
-            retry_max_attempts=4,
-            retry_base_delay_seconds=1.0,
-            retry_max_delay_seconds=30.0,
         )
         session = Mock()
         session.request.return_value = FakeResponse(text="cached text", content=b"x")
@@ -258,10 +242,6 @@ class HTTPUtilsTests(unittest.TestCase):
         http.configure_http_runtime(
             cache_enabled=True,
             cache_dir=self.temp_dir.name,
-            cache_ttl_seconds=1,
-            retry_max_attempts=4,
-            retry_base_delay_seconds=1.0,
-            retry_max_delay_seconds=30.0,
         )
         session = Mock()
         session.request.return_value = FakeResponse(payload={"fresh": True})
@@ -278,10 +258,6 @@ class HTTPUtilsTests(unittest.TestCase):
         http.configure_http_runtime(
             cache_enabled=True,
             cache_dir=self.temp_dir.name,
-            cache_ttl_seconds=3600,
-            retry_max_attempts=4,
-            retry_base_delay_seconds=1.0,
-            retry_max_delay_seconds=30.0,
         )
         session = Mock()
         session.request.return_value = FakeResponse(payload={"ok": True})
@@ -314,10 +290,6 @@ class HTTPUtilsTests(unittest.TestCase):
         http.configure_http_runtime(
             cache_enabled=False,
             cache_dir=self.temp_dir.name,
-            cache_ttl_seconds=3600,
-            retry_max_attempts=4,
-            retry_base_delay_seconds=2.0,
-            retry_max_delay_seconds=30.0,
         )
 
         with patch("utils.http.time.sleep") as sleep_mock:
@@ -331,10 +303,6 @@ class HTTPUtilsTests(unittest.TestCase):
         http.configure_http_runtime(
             cache_enabled=False,
             cache_dir=self.temp_dir.name,
-            cache_ttl_seconds=3600,
-            retry_max_attempts=4,
-            retry_base_delay_seconds=2.0,
-            retry_max_delay_seconds=30.0,
         )
 
         self.assertEqual(http._calculate_backoff_delay(response, 3, strategy="fixed"), 2.0)
@@ -353,10 +321,6 @@ class HTTPUtilsTests(unittest.TestCase):
         http.configure_http_runtime(
             cache_enabled=False,
             cache_dir=self.temp_dir.name,
-            cache_ttl_seconds=3600,
-            retry_max_attempts=2,
-            retry_base_delay_seconds=1.0,
-            retry_max_delay_seconds=30.0,
         )
 
         with patch("utils.http.time.sleep"):
@@ -373,10 +337,6 @@ class HTTPUtilsTests(unittest.TestCase):
         http.configure_http_runtime(
             cache_enabled=False,
             cache_dir=self.temp_dir.name,
-            cache_ttl_seconds=3600,
-            retry_max_attempts=2,
-            retry_base_delay_seconds=1.0,
-            retry_max_delay_seconds=30.0,
         )
 
         with patch("utils.http.time.sleep"), patch.object(http.LOGGER, "error") as error_log:
@@ -398,10 +358,6 @@ class HTTPUtilsTests(unittest.TestCase):
         http.configure_http_runtime(
             cache_enabled=False,
             cache_dir=self.temp_dir.name,
-            cache_ttl_seconds=3600,
-            retry_max_attempts=1,
-            retry_base_delay_seconds=1.0,
-            retry_max_delay_seconds=30.0,
         )
 
         payload = http.request_json(session, "GET", "https://example.org/api")
@@ -431,10 +387,6 @@ class HTTPUtilsTests(unittest.TestCase):
         http.configure_http_runtime(
             cache_enabled=False,
             cache_dir=self.temp_dir.name,
-            cache_ttl_seconds=3600,
-            retry_max_attempts=4,
-            retry_base_delay_seconds=1.0,
-            retry_max_delay_seconds=5.0,
         )
 
         delay = http._calculate_backoff_delay(response, 1)
@@ -446,10 +398,6 @@ class HTTPUtilsTests(unittest.TestCase):
         http.configure_http_runtime(
             cache_enabled=False,
             cache_dir=self.temp_dir.name,
-            cache_ttl_seconds=3600,
-            retry_max_attempts=4,
-            retry_base_delay_seconds=0.0,
-            retry_max_delay_seconds=5.0,
         )
 
         delay = http._calculate_backoff_delay(response, 1)
@@ -462,10 +410,6 @@ class HTTPUtilsTests(unittest.TestCase):
         http.configure_http_runtime(
             cache_enabled=False,
             cache_dir=self.temp_dir.name,
-            cache_ttl_seconds=3600,
-            retry_max_attempts=1,
-            retry_base_delay_seconds=1.0,
-            retry_max_delay_seconds=30.0,
         )
 
         response = http._request_with_backoff(session, "GET", "https://example.org/api", timeout=5)

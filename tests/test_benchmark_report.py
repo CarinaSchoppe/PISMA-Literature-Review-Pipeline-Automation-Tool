@@ -51,10 +51,6 @@ class BenchmarkReportTests(unittest.TestCase):
     def test_run_benchmark_suite_computes_summary_and_regression_flags(self) -> None:
         calls: list[str] = []
 
-        def fake_runner(_project_root: Path) -> int:
-            calls.append("run")
-            return 5
-
         case = benchmark_report.BenchmarkCase(
         )
 

@@ -61,10 +61,6 @@ def configure_http_runtime(
         *,
         cache_enabled: bool,
         cache_dir: str | Path,
-        cache_ttl_seconds: int,
-        retry_max_attempts: int,
-        retry_base_delay_seconds: float,
-        retry_max_delay_seconds: float,
 ) -> None:
     """Configure process-wide caching and backoff settings for the request helpers."""
 
