@@ -25,16 +25,16 @@ class DiscoveryClientTests(unittest.TestCase):
         ).finalize()
         client = ArxivClient(config)
         payload = """
-        <entry xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
-          <id>http://arxiv.org/abs/2501.12345v1</id>
+        <entry xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="https://arxiv.org/schemas/atom">
+          <id>https://arxiv.org/abs/2501.12345v1</id>
           <updated>2025-01-20T00:00:00Z</updated>
           <published>2025-01-18T00:00:00Z</published>
           <title>LLMs for Evidence Discovery</title>
           <summary>We study literature screening and evidence discovery workflows.</summary>
           <author><name>Alice Example</name></author>
           <author><name>Bob Example</name></author>
-          <link href="http://arxiv.org/abs/2501.12345v1" rel="alternate" type="text/html"/>
-          <link title="pdf" href="http://arxiv.org/pdf/2501.12345v1" rel="related" type="application/pdf"/>
+          <link href="https://arxiv.org/abs/2501.12345v1" rel="alternate" type="text/html"/>
+          <link title="pdf" href="https://arxiv.org/pdf/2501.12345v1" rel="related" type="application/pdf"/>
           <arxiv:doi>10.2000/arxiv-example</arxiv:doi>
           <arxiv:primary_category term="cs.IR"/>
         </entry>

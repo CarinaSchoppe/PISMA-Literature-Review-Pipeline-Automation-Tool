@@ -9,7 +9,7 @@ from models.paper import PaperMetadata
 from utils.http import RateLimiter, build_session, request_text
 from utils.text_processing import normalize_text, safe_year
 
-ATOM_NS = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "http://arxiv.org/schemas/atom"}
+ATOM_NS = {"atom": "http://www.w3.org/2005/Atom", "arxiv": "https://arxiv.org/schemas/atom"}
 
 
 class ArxivClient:

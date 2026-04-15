@@ -21,30 +21,31 @@ class FakeBinaryResponse:
         self.headers = headers
         self._chunks = chunks
 
-    def iter_content(self, chunk_size: int = 8192):  # noqa: ARG002 - mimic requests API
+    def iter_content(self):  # noqa: ARG002 - mimic requests API
         yield from self._chunks
+
+
+def _config(root: Path) -> ResearchConfig:
+    return ResearchConfig(
+        research_topic="Test",
+        search_keywords=["llm"],
+        openalex_enabled=False,
+        semantic_scholar_enabled=False,
+        crossref_enabled=False,
+        include_pubmed=False,
+        data_dir=root / "data",
+        papers_dir=root / "papers",
+        results_dir=root / "results",
+        database_path=root / "data" / "db.sqlite",
+    ).finalize()
 
 
 class FullTextExtractionAndPDFTests(unittest.TestCase):
     """Verify PDF enrichment behavior without reaching external services."""
 
-    def _config(self, root: Path) -> ResearchConfig:
-        return ResearchConfig(
-            research_topic="Test",
-            search_keywords=["llm"],
-            openalex_enabled=False,
-            semantic_scholar_enabled=False,
-            crossref_enabled=False,
-            include_pubmed=False,
-            data_dir=root / "data",
-            papers_dir=root / "papers",
-            results_dir=root / "results",
-            database_path=root / "data" / "db.sqlite",
-        ).finalize()
-
     def test_fetch_for_paper_reads_unpaywall_and_optionally_downloads(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            config = self._config(Path(temp_dir))
+            config = _config(Path(temp_dir))
             config.api_settings.unpaywall_email = "carina@example.com"
             config.api_settings.unpaywall_calls_per_second = 1.2
             paper = PaperMetadata(title="Example", doi="10.1000/example", source="test")
@@ -64,7 +65,7 @@ class FullTextExtractionAndPDFTests(unittest.TestCase):
     def test_download_pdf_reuses_existing_file_rejects_html_and_writes_valid_pdf(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            fetcher = PDFFetcher(self._config(root))
+            fetcher = PDFFetcher(_config(root))
             paper = PaperMetadata(title="My Paper", source="test")
 
             existing = root / "papers" / "my-paper.pdf"

@@ -17,6 +17,9 @@ LOGGER = logging.getLogger(__name__)
 class LLMResponse:
     """Minimal normalized response returned by any configured LLM adapter."""
 
+    def __init__(self):
+        pass
+
     content: str | None
     enabled: bool
     provider_name: str
@@ -25,28 +28,23 @@ class LLMResponse:
 class BaseLLMClient:
     """Fallback LLM client used when screening should stay heuristic only."""
 
+    def __init__(self):
+        pass
+
     enabled = False
     provider_name = "heuristic"
 
     def chat(self, *, system_prompt: str, user_prompt: str) -> LLMResponse:
         """Return a disabled response so heuristic-only runs share one adapter contract."""
 
-        return LLMResponse(content=None, enabled=False, provider_name=self.provider_name)
+        return LLMResponse()
 
 
 class OpenAICompatibleLLMClient(BaseLLMClient):
     """Client for OpenAI-compatible chat-completions endpoints, including Ollama."""
 
-    def __init__(
-            self,
-            *,
-            base_url: str,
-            model: str,
-            api_key: str,
-            temperature: float,
-            timeout_seconds: int,
-            provider_name: str = "openai_compatible",
-    ) -> None:
+    def __init__(self, *, base_url: str, model: str, api_key: str, temperature: float, timeout_seconds: int, provider_name: str = "openai_compatible") -> None:
+        super().__init__()
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.temperature = temperature
@@ -81,29 +79,35 @@ class OpenAICompatibleLLMClient(BaseLLMClient):
             },
         )
         if not payload:
-            return LLMResponse(content=None, enabled=True, provider_name=self.provider_name)
+            return LLMResponse()
         choices = payload.get("choices") or []
         if not choices:
-            return LLMResponse(content=None, enabled=True, provider_name=self.provider_name)
+            return LLMResponse()
         return LLMResponse(
-            content=choices[0].get("message", {}).get("content"),
-            enabled=True,
-            provider_name=self.provider_name,
         )
+
+
+def _extract_text(payload: dict[str, Any]) -> str | None:
+    """Flatten Gemini candidate parts into a single assistant text response."""
+
+    candidates = payload.get("candidates") or []
+    if not candidates:
+        return None
+    content = candidates[0].get("content") or {}
+    parts = content.get("parts") or []
+    chunks = [
+        str(part.get("text", "")).strip()
+        for part in parts
+        if isinstance(part, dict) and str(part.get("text", "")).strip()
+    ]
+    return "\n".join(chunks) or None
 
 
 class GeminiLLMClient(BaseLLMClient):
     """Client for Google's Gemini GenerateContent API."""
 
-    def __init__(
-            self,
-            *,
-            base_url: str,
-            model: str,
-            api_key: str,
-            temperature: float,
-            timeout_seconds: int,
-    ) -> None:
+    def __init__(self, *, base_url: str, model: str, api_key: str, temperature: float, timeout_seconds: int) -> None:
+        super().__init__()
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.api_key = api_key
@@ -134,27 +138,9 @@ class GeminiLLMClient(BaseLLMClient):
             },
         )
         if not payload:
-            return LLMResponse(content=None, enabled=True, provider_name=self.provider_name)
+            return LLMResponse()
         return LLMResponse(
-            content=self._extract_text(payload),
-            enabled=True,
-            provider_name=self.provider_name,
         )
-
-    def _extract_text(self, payload: dict[str, Any]) -> str | None:
-        """Flatten Gemini candidate parts into a single assistant text response."""
-
-        candidates = payload.get("candidates") or []
-        if not candidates:
-            return None
-        content = candidates[0].get("content") or {}
-        parts = content.get("parts") or []
-        chunks = [
-            str(part.get("text", "")).strip()
-            for part in parts
-            if isinstance(part, dict) and str(part.get("text", "")).strip()
-        ]
-        return "\n".join(chunks) or None
 
 
 def load_transformers_runtime() -> tuple[Any, Any]:
@@ -170,21 +156,44 @@ def load_transformers_runtime() -> tuple[Any, Any]:
     return torch, pipeline
 
 
+def _extract_generated_content(output: Any) -> str | None:
+    """Normalize different pipeline output shapes into one plain text response."""
+
+    if not output:
+        return None
+    first_item = output[0] if isinstance(output, list) else output
+    generated = first_item.get("generated_text") if isinstance(first_item, dict) else first_item
+    if isinstance(generated, str):
+        return generated
+    if isinstance(generated, list) and generated:
+        last_item = generated[-1]
+        if isinstance(last_item, dict):
+            return str(last_item.get("content", "")).strip() or None
+        return str(last_item).strip() or None
+    return None
+
+
+def _accelerate_available() -> bool:
+    """Detect whether `accelerate` is available for automatic device placement."""
+
+    return importlib.util.find_spec("accelerate") is not None
+
+
+def _resolve_dtype(torch: Any, dtype_name: str) -> Any | None:
+    """Map a config string like `float16` to a torch dtype object when possible."""
+
+    normalized = (dtype_name or "auto").strip().lower()
+    if normalized == "auto":
+        return "auto"
+    attr_name = normalized.replace("-", "").replace(" ", "")
+    return getattr(torch, attr_name, None)
+
+
 class HuggingFaceLocalLLMClient(BaseLLMClient):
     """Local text-generation client backed by `transformers.pipeline`."""
 
-    def __init__(
-            self,
-            *,
-            model_id: str,
-            task: str,
-            temperature: float,
-            max_new_tokens: int,
-            device: str,
-            dtype: str,
-            cache_dir: str | None,
-            trust_remote_code: bool,
-    ) -> None:
+    def __init__(self, *, model_id: str, task: str, temperature: float, max_new_tokens: int, device: str, dtype: str, cache_dir: str | None, trust_remote_code: bool) -> None:
+        super().__init__()
         self.provider_name = "huggingface_local"
         self.enabled = False
         self.temperature = temperature
@@ -200,11 +209,11 @@ class HuggingFaceLocalLLMClient(BaseLLMClient):
             }
             if cache_dir:
                 pipeline_kwargs["model_kwargs"] = {"cache_dir": cache_dir}
-            resolved_dtype = self._resolve_dtype(torch, dtype)
+            resolved_dtype = _resolve_dtype(torch, dtype)
             if resolved_dtype is not None:
                 pipeline_kwargs["dtype"] = resolved_dtype
             if device == "auto":
-                if self._accelerate_available():
+                if _accelerate_available():
                     pipeline_kwargs["device_map"] = "auto"
                 else:
                     LOGGER.warning(
@@ -223,7 +232,7 @@ class HuggingFaceLocalLLMClient(BaseLLMClient):
         """Generate a response from a local model using chat-style messages."""
 
         if not self.enabled or self._generator is None:
-            return LLMResponse(content=None, enabled=False, provider_name=self.provider_name)
+            return LLMResponse()
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -238,45 +247,12 @@ class HuggingFaceLocalLLMClient(BaseLLMClient):
         else:
             generation_kwargs["do_sample"] = False
         try:
-            output = self._generator(messages, **generation_kwargs)
+            output = self._generator
             return LLMResponse(
-                content=self._extract_generated_content(output),
-                enabled=True,
-                provider_name=self.provider_name,
             )
         except Exception as exc:  # noqa: BLE001
             LOGGER.warning("Local Hugging Face generation failed for '%s': %s", self.model_id, exc)
-            return LLMResponse(content=None, enabled=True, provider_name=self.provider_name)
-
-    def _resolve_dtype(self, torch: Any, dtype_name: str) -> Any | None:
-        """Map a config string like `float16` to a torch dtype object when possible."""
-
-        normalized = (dtype_name or "auto").strip().lower()
-        if normalized == "auto":
-            return "auto"
-        attr_name = normalized.replace("-", "").replace(" ", "")
-        return getattr(torch, attr_name, None)
-
-    def _accelerate_available(self) -> bool:
-        """Detect whether `accelerate` is available for automatic device placement."""
-
-        return importlib.util.find_spec("accelerate") is not None
-
-    def _extract_generated_content(self, output: Any) -> str | None:
-        """Normalize different pipeline output shapes into one plain text response."""
-
-        if not output:
-            return None
-        first_item = output[0] if isinstance(output, list) else output
-        generated = first_item.get("generated_text") if isinstance(first_item, dict) else first_item
-        if isinstance(generated, str):
-            return generated
-        if isinstance(generated, list) and generated:
-            last_item = generated[-1]
-            if isinstance(last_item, dict):
-                return str(last_item.get("content", "")).strip() or None
-            return str(last_item).strip() or None
-        return None
+            return LLMResponse()
 
 
 def build_llm_client(config: ResearchConfig) -> BaseLLMClient:

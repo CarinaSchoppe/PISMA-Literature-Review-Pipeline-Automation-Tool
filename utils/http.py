@@ -28,6 +28,9 @@ BackoffStrategy = Literal["fixed", "linear", "exponential"]
 class _HttpRuntimeConfig:
     """In-process HTTP runtime tuning shared by all request helpers."""
 
+    def __init__(self):
+        pass
+
     cache_enabled: bool = False
     cache_dir: Path = Path("data/http_cache")
     cache_ttl_seconds: int = 86_400
@@ -70,12 +73,6 @@ def configure_http_runtime(
     if cache_enabled:
         resolved_cache_dir.mkdir(parents=True, exist_ok=True)
     HTTP_RUNTIME_CONFIG = _HttpRuntimeConfig(
-        cache_enabled=cache_enabled,
-        cache_dir=resolved_cache_dir,
-        cache_ttl_seconds=max(int(cache_ttl_seconds), 1),
-        retry_max_attempts=max(int(retry_max_attempts), 1),
-        retry_base_delay_seconds=max(float(retry_base_delay_seconds), 0.0),
-        retry_max_delay_seconds=max(float(retry_max_delay_seconds), 0.0),
     )
 
 
@@ -221,7 +218,7 @@ def build_session(user_agent: str, extra_headers: dict[str, str] | None = None) 
     )
     adapter = HTTPAdapter(max_retries=retry, pool_connections=20, pool_maxsize=20)
     session.mount("https://", adapter)
-    session.mount("http://", adapter)
+    session.mount("https://", adapter)
     session.headers.update({"User-Agent": user_agent, "Accept": "application/json"})
     if extra_headers:
         session.headers.update(extra_headers)

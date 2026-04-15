@@ -158,14 +158,14 @@ class UIViewModelTests(unittest.TestCase):
             values = default_form_values()
             values.update(
                 {
-                "research_topic": "Evidence discovery",
-                "search_keywords": "llm, review",
-                "profile_name": "demo-profile",
-                "ui_settings_mode": "advanced",
-                "ui_show_advanced_settings": True,
-                "results_dir": "results/demo-profile",
-            }
-        )
+                    "research_topic": "Evidence discovery",
+                    "search_keywords": "llm, review",
+                    "profile_name": "demo-profile",
+                    "ui_settings_mode": "advanced",
+                    "ui_show_advanced_settings": True,
+                    "results_dir": "results/demo-profile",
+                }
+            )
 
             path = manager.save_profile("demo-profile", values)
             loaded = manager.load_profile("demo-profile")

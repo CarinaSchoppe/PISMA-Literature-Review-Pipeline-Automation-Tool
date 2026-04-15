@@ -30,6 +30,12 @@ class _BrokenCloseHandler(logging.Handler):
 class LoggingUtilsTests(unittest.TestCase):
     """Exercise TRACE registration, verbosity aliases, and file-backed logging setup."""
 
+    def __init__(self, methodName: str = "runTest"):
+        super().__init__(methodName)
+        self.root_logger = None
+        self.original_handlers = None
+        self.original_level = None
+
     def setUp(self) -> None:
         self.root_logger = logging.getLogger()
         self.original_handlers = list(self.root_logger.handlers)

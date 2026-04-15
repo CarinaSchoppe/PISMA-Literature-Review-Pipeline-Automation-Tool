@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, model_validator
 
 from utils.logging_utils import build_log_file_path, normalize_verbosity
 from utils.text_processing import build_query, ensure_parent_directory, make_query_key, parse_search_terms
@@ -107,28 +107,12 @@ class ApiSettings(BaseModel):
         default_factory=lambda: float(os.getenv("SEMANTIC_SCHOLAR_RETRY_BACKOFF_BASE_SECONDS", "2.0"))
     )
 
-    @field_validator(
-        "llm_temperature",
-        "openalex_calls_per_second",
-        "semantic_scholar_calls_per_second",
-        "crossref_calls_per_second",
-        "springer_calls_per_second",
-        "arxiv_calls_per_second",
-        "pubmed_calls_per_second",
-        "europe_pmc_calls_per_second",
-        "core_calls_per_second",
-        "unpaywall_calls_per_second",
-        "google_scholar_calls_per_second",
-        "semantic_scholar_request_delay_seconds",
-        "semantic_scholar_retry_backoff_base_seconds",
-    )
     @classmethod
     def validate_non_negative_float(cls, value: float) -> float:
         """Clamp float tuning parameters to non-negative values."""
 
         return max(float(value), 0.0)
 
-    @field_validator("semantic_scholar_max_requests_per_minute", "semantic_scholar_retry_attempts")
     @classmethod
     def validate_provider_positive_int(cls, value: int) -> int:
         """Require positive integer values for provider-specific retry and throttling settings."""
@@ -148,14 +132,12 @@ class AnalysisPassConfig(BaseModel):
     min_input_score: float | None = None
     enabled: bool = True
 
-    @field_validator("threshold", "maybe_threshold_margin")
     @classmethod
     def validate_score_like_fields(cls, value: float) -> float:
         """Clamp pass score-like values to the supported 0-100 range."""
 
         return min(max(float(value), 0.0), 100.0)
 
-    @field_validator("min_input_score")
     @classmethod
     def validate_optional_min_input_score(cls, value: float | None) -> float | None:
         """Clamp optional per-pass entry-score gates to the supported 0-100 range."""
@@ -173,7 +155,6 @@ class TopicKeywordRuleConfig(BaseModel):
     threshold: float = 55.0
     enabled: bool = True
 
-    @field_validator("keyword")
     @classmethod
     def validate_keyword(cls, value: str) -> str:
         """Require a non-empty keyword string for each rule."""
@@ -183,14 +164,12 @@ class TopicKeywordRuleConfig(BaseModel):
             raise ValueError("keyword cannot be empty")
         return cleaned
 
-    @field_validator("weight")
     @classmethod
     def validate_weight(cls, value: float) -> float:
         """Clamp keyword weights to a sensible positive range."""
 
         return max(float(value), 0.0)
 
-    @field_validator("threshold")
     @classmethod
     def validate_threshold(cls, value: float) -> float:
         """Clamp per-keyword thresholds to the supported 0-100 range."""
@@ -306,7 +285,6 @@ class ResearchConfig(BaseModel):
     api_settings: ApiSettings = Field(default_factory=ApiSettings)
     query_key: str | None = None
 
-    @model_validator(mode="before")
     @classmethod
     def populate_google_scholar_page_defaults(cls, value: Any) -> Any:
         """Populate dependent Scholar defaults before validation when only custom bounds are provided."""
@@ -319,7 +297,6 @@ class ResearchConfig(BaseModel):
             payload["google_scholar_pages"] = page_min
         return payload
 
-    @model_validator(mode="before")
     @classmethod
     def populate_stage_defaults_from_legacy_modes(cls, value: Any) -> Any:
         """Derive stage toggles from legacy run controls when explicit stage settings are absent."""
@@ -338,14 +315,12 @@ class ResearchConfig(BaseModel):
             payload["ai_evaluation_enabled"] = legacy_run_mode != "collect"
         return payload
 
-    @field_validator("search_keywords", mode="before")
     @classmethod
     def validate_keywords(cls, value: Any) -> list[str]:
         """Normalize keyword input from comma-separated strings or iterables."""
 
         return parse_search_terms(value)
 
-    @field_validator("verbosity", mode="before")
     @classmethod
     def validate_verbosity(cls, value: Any) -> str:
         """Normalize legacy verbosity aliases and user-facing labels."""
@@ -355,23 +330,12 @@ class ResearchConfig(BaseModel):
             raise ValueError("verbosity must be one of normal, verbose, or ultra_verbose")
         return normalized
 
-
-
-    @field_validator(
-        "inclusion_criteria",
-        "exclusion_criteria",
-        "banned_topics",
-        "excluded_title_terms",
-        "topic_prefilter_weighted_keywords",
-        mode="before",
-    )
     @classmethod
     def validate_criteria(cls, value: Any) -> list[str]:
         """Normalize criteria-like fields into compact lists of non-empty strings."""
 
         return parse_search_terms(value)
 
-    @field_validator("analysis_passes", mode="before")
     @classmethod
     def validate_analysis_passes(cls, value: Any) -> list[AnalysisPassConfig]:
         """Accept analysis passes from config objects, lists, or compact string forms."""
@@ -395,7 +359,6 @@ class ResearchConfig(BaseModel):
             return [parse_analysis_pass(value)]
         return []
 
-    @field_validator("year_range_end")
     @classmethod
     def validate_year_range(cls, value: int, info: Any) -> int:
         """Reject year ranges whose end value falls before the configured start year."""
@@ -405,50 +368,30 @@ class ResearchConfig(BaseModel):
             raise ValueError("year_range_end must be greater than or equal to year_range_start")
         return value
 
-    @field_validator("topic_prefilter_high_threshold", "topic_prefilter_review_threshold")
     @classmethod
     def validate_similarity_fraction(cls, value: float) -> float:
         """Clamp semantic-similarity thresholds to the supported 0-1 range."""
 
         return min(max(float(value), 0.0), 1.0)
 
-    @field_validator("relevance_threshold")
     @classmethod
     def validate_threshold(cls, value: float) -> float:
         """Clamp the global screening threshold to the supported 0-100 range."""
 
         return min(max(float(value), 0.0), 100.0)
 
-    @field_validator("topic_prefilter_match_threshold", "topic_prefilter_near_fit_threshold")
     @classmethod
     def validate_topic_fit_thresholds(cls, value: float) -> float:
         """Clamp research-fit thresholds to the supported 0-100 range."""
 
         return min(max(float(value), 0.0), 100.0)
 
-    @field_validator("maybe_threshold_margin")
     @classmethod
     def validate_margin(cls, value: float) -> float:
         """Clamp the triage maybe-margin to the supported 0-100 range."""
 
         return min(max(float(value), 0.0), 100.0)
 
-    @field_validator(
-        "pages_to_retrieve",
-        "results_per_page",
-        "max_papers_to_analyze",
-        "max_workers",
-        "request_timeout_seconds",
-        "full_text_max_chars",
-        "http_cache_ttl_seconds",
-        "http_retry_max_attempts",
-        "pdf_batch_size",
-        "google_scholar_pages",
-        "google_scholar_page_min",
-        "google_scholar_page_max",
-        "google_scholar_results_per_page",
-        "topic_prefilter_max_chars",
-    )
     @classmethod
     def validate_positive_ints(cls, value: int) -> int:
         """Require positive integer values for paging, sizing, and worker controls."""
@@ -457,7 +400,6 @@ class ResearchConfig(BaseModel):
             raise ValueError("Configuration value must be at least 1")
         return int(value)
 
-    @field_validator("http_retry_base_delay_seconds", "http_retry_max_delay_seconds")
     @classmethod
     def validate_non_negative_retry_delays(cls, value: float) -> float:
         """Require retry delay settings to stay at or above zero seconds."""
@@ -466,7 +408,6 @@ class ResearchConfig(BaseModel):
             raise ValueError("Retry delay values must be at least 0")
         return float(value)
 
-    @field_validator("discovery_workers", "io_workers", "screening_workers")
     @classmethod
     def validate_non_negative_worker_ints(cls, value: int) -> int:
         """Allow stage-specific worker overrides where zero means inherit the global worker count."""
@@ -475,14 +416,12 @@ class ResearchConfig(BaseModel):
             raise ValueError("Worker override values must be at least 0")
         return int(value)
 
-    @field_validator("title_similarity_threshold")
     @classmethod
     def validate_similarity_threshold(cls, value: float) -> float:
         """Clamp similarity thresholds to the supported 0-1 range."""
 
         return min(max(float(value), 0.0), 1.0)
 
-    @field_validator("max_discovered_records")
     @classmethod
     def validate_optional_positive_int(cls, value: int | None) -> int | None:
         """Require positive integer values for optional discovery hard caps."""
@@ -493,7 +432,6 @@ class ResearchConfig(BaseModel):
             raise ValueError("Configuration value must be at least 1")
         return int(value)
 
-    @field_validator("min_discovered_records")
     @classmethod
     def validate_non_negative_int(cls, value: int) -> int:
         """Require non-negative integer values for minimum discovery gates."""
@@ -502,7 +440,6 @@ class ResearchConfig(BaseModel):
             raise ValueError("Configuration value must be at least 0")
         return int(value)
 
-    @field_validator("topic_prefilter_min_keyword_matches")
     @classmethod
     def validate_non_negative_keyword_match_count(cls, value: int) -> int:
         """Allow zero-or-more required topic keyword matches for research-fit rules."""
@@ -817,9 +754,9 @@ class ResearchConfig(BaseModel):
             return default
 
         interactive_mode = bool(getattr(args, "wizard", False)) or (
-            not args.config_file
-            and getattr(args, "research_topic", None) is None
-            and getattr(args, "search_keywords", None) is None
+                not args.config_file
+                and getattr(args, "research_topic", None) is None
+                and getattr(args, "search_keywords", None) is None
         )
 
         topic = value_for("research_topic", getattr(args, "research_topic", None))
@@ -1846,9 +1783,9 @@ def parse_analysis_pass(value: str) -> AnalysisPassConfig:
 
 
 def parse_topic_prefilter_keyword_rule(
-    value: str,
-    *,
-    default_threshold: float = 55.0,
+        value: str,
+        *,
+        default_threshold: float = 55.0,
 ) -> TopicKeywordRuleConfig:
     """Parse one compact keyword rule from CLI, config files, or the GUI editor."""
 
@@ -1865,6 +1802,3 @@ def parse_topic_prefilter_keyword_rule(
     weight = float(parts[1]) if len(parts) >= 2 and parts[1] else 1.0
     threshold = float(parts[2]) if len(parts) >= 3 and parts[2] else float(default_threshold)
     return TopicKeywordRuleConfig(keyword=keyword, weight=weight, threshold=threshold)
-
-
-

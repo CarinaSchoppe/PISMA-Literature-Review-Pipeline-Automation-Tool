@@ -21,6 +21,10 @@ from models.paper import PaperMetadata
 class DiscoveryClientsExtendedTests(unittest.TestCase):
     """Exercise source-specific search, parsing, and resolution helper methods."""
 
+    def __init__(self, methodName: str = "runTest"):
+        super().__init__(methodName)
+        self.config = None
+
     def setUp(self) -> None:
         self.config = ResearchConfig(
             research_topic="Large language models",
@@ -415,9 +419,9 @@ class DiscoveryClientsExtendedTests(unittest.TestCase):
         with patch(
                 "discovery.arxiv_client.request_text",
                 return_value="""
-            <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+            <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="https://arxiv.org/schemas/atom">
               <entry>
-                <id>http://arxiv.org/abs/1234.5678</id>
+                <id>https://arxiv.org/abs/1234.5678</id>
                 <title>arXiv LLM Survey</title>
                 <summary>Preprint summary.</summary>
                 <published>2024-02-01T00:00:00Z</published>
@@ -440,16 +444,16 @@ class DiscoveryClientsExtendedTests(unittest.TestCase):
         empty_client = ArxivClient(empty_config)
         with patch(
                 "discovery.arxiv_client.request_text",
-                return_value='<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom"></feed>',
+                return_value='<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="https://arxiv.org/schemas/atom"></feed>',
         ):
             self.assertEqual(empty_client.search(), [])
 
         limit_config = self.config.model_copy(update={"discovery_strategy": "precise", "pages_to_retrieve": 2, "results_per_page": 1})
         limit_client = ArxivClient(limit_config)
         feed = """
-        <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+        <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="https://arxiv.org/schemas/atom">
           <entry>
-            <id>http://arxiv.org/abs/9999.0001</id>
+            <id>https://arxiv.org/abs/9999.0001</id>
             <title>arXiv Limit Paper</title>
             <summary>Preprint summary.</summary>
             <published>2024-02-01T00:00:00Z</published>

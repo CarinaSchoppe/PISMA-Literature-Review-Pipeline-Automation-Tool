@@ -26,13 +26,25 @@ from utils import http
 
 
 class _PrefilterTorch:
+    def __init__(self):
+        pass
+
     class cuda:
+        def __init__(self):
+            pass
+
         @staticmethod
         def is_available() -> bool:
             return False
 
     class nn:
+        def __init__(self):
+            pass
+
         class functional:
+            def __init__(self):
+                pass
+
             @staticmethod
             def normalize(value, p=2, dim=1):  # noqa: ANN001, ARG004
                 return {"normalized": value, "p": p, "dim": dim}
@@ -46,7 +58,14 @@ class _PrefilterTorch:
         return nullcontext()
 
 
+def size():
+    return 2, 3, 4
+
+
 class _FakeTensor:
+    def __init__(self):
+        pass
+
     def to(self, _device):  # noqa: ANN001
         return self
 
@@ -59,13 +78,10 @@ class _FakeTensor:
     def float(self):
         return self
 
-    def size(self):
-        return (2, 3, 4)
-
-    def sum(self, dim=None):  # noqa: ANN001, ARG002
+    def sum(self):  # noqa: ANN001, ARG002
         return self
 
-    def clamp(self, min=0.0):  # noqa: A002, ARG002
+    def clamp(self):  # noqa: A002, ARG002
         return self
 
     def __mul__(self, other):  # noqa: ANN001
@@ -76,16 +92,25 @@ class _FakeTensor:
 
 
 class _PrefilterTokenizer:
+    def __init__(self):
+        pass
+
     def __call__(self, texts, **kwargs):  # noqa: ANN001, ARG002
         _ = texts
         return {"attention_mask": _FakeTensor(), "input_ids": _FakeTensor()}
 
 
 class _PrefilterModelOutput:
+    def __init__(self):
+        pass
+
     last_hidden_state = _FakeTensor()
 
 
 class _PrefilterModel:
+    def __init__(self):
+        pass
+
     def to(self, _device):  # noqa: ANN001
         return self
 
@@ -97,14 +122,20 @@ class _PrefilterModel:
 
 
 class _PrefilterTokenizerLoader:
+    def __init__(self):
+        pass
+
     @staticmethod
-    def from_pretrained(*args, **kwargs):  # noqa: ANN002, ANN003
+    def from_pretrained():  # noqa: ANN002, ANN003
         return _PrefilterTokenizer()
 
 
 class _PrefilterModelLoader:
+    def __init__(self):
+        pass
+
     @staticmethod
-    def from_pretrained(*args, **kwargs):  # noqa: ANN002, ANN003
+    def from_pretrained():  # noqa: ANN002, ANN003
         return _PrefilterModel()
 
 
@@ -144,14 +175,23 @@ class _FakeLLMClient:
         return SimpleNamespace(content=self.responses.pop(0))
 
 
+def summarize_review(papers):  # noqa: ANN001
+    _ = papers
+    return None
+
+
 class _FakeScreener:
-    def summarize_review(self, papers):  # noqa: ANN001
-        _ = papers
-        return None
+    def __init__(self):
+        pass
 
 
 class FeatureBranchCoverageTests(unittest.TestCase):
     """Exercise remaining uncovered branches in new feature modules."""
+
+    def __init__(self, methodName: str = "runTest"):
+        super().__init__(methodName)
+        self.temp_dir = None
+        self.config = None
 
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -201,7 +241,7 @@ class FeatureBranchCoverageTests(unittest.TestCase):
             return LocalTopicMatcher(config)
 
     def test_topic_prefilter_helper_branches_cover_text_and_device_paths(self) -> None:
-        matcher = self._matcher(topic_prefilter_text_mode="title_only")
+        matcher = self
         empty_text_paper = self._paper(raw_payload={})
 
         with patch.object(matcher, "_build_paper_text", return_value=("", [])):
@@ -239,29 +279,11 @@ class FeatureBranchCoverageTests(unittest.TestCase):
 
         self.assertEqual(product.value, 6.0)
         self.assertEqual(product.sum().item(), 6.0)
-        self.assertIsNone(_FakeScreener().summarize_review([self._paper()]))
+        self.assertIsNone(summarize_review([self._paper()]))
 
     def test_ai_screener_branch_logging_and_topic_match_enrichment(self) -> None:
         config = self.config.model_copy(update={"llm_provider": "heuristic", "verbosity": "verbose", "log_screening_decisions": True, "topic_prefilter_enabled": False})
         topic_match = TopicMatchResult(
-            similarity=0.66,
-            score=66.0,
-            threshold=55.0,
-            review_threshold=0.55,
-            high_threshold=0.75,
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-            enabled=True,
-            classification="REVIEW",
-            should_exclude=False,
-            keyword_overlap_score=0.5,
-            matched_keywords=["AI governance"],
-            source_sections=["title", "abstract"],
-            explanation="Moderate semantic match.",
-            research_fit_label="NEAR_FIT",
-            weighted_keyword_score=61.0,
-            min_keyword_matches=1,
-            matched_keyword_count=1,
-            keyword_rule_count=1,
         )
         result = ScreeningResult(
             stage_one_decision="include",
@@ -283,8 +305,8 @@ class FeatureBranchCoverageTests(unittest.TestCase):
             self.assertIn("Moderate semantic match", screened.explanation)
             self.assertTrue(any("Local topic prefilter" in message for message in info_logs.output))
 
-            same_result = screener._enrich_with_topic_match(result, None)
-            enriched = screener._enrich_with_topic_match(result, topic_match)
+            same_result = _enrich_with_topic_match(result, None)
+            enriched = _enrich_with_topic_match(result, topic_match)
             self.assertIs(same_result, result)
             self.assertEqual(enriched.topic_prefilter_label, "REVIEW")
             self.assertIn("Moderate semantic match", enriched.explanation)
@@ -303,7 +325,7 @@ class FeatureBranchCoverageTests(unittest.TestCase):
                 self.assertIsNone(screener._llm_stage_two(self._paper(), "include"))
                 self.assertIsNone(screener._llm_stage_two(self._paper(), "include"))
                 self.assertIsNone(screener._llm_stage_two(self._paper(), "include"))
-                self.assertEqual(screener._parse_json_response("{broken json}"), {})
+                self.assertEqual(_parse_json_response("{broken json}"), {})
             combined = "\n".join(warning_logs.output)
             self.assertIn("no valid JSON", combined)
             self.assertIn("invalid decision", combined)
@@ -349,12 +371,12 @@ class FeatureBranchCoverageTests(unittest.TestCase):
         self.assertEqual(len(parsed), 1)
         self.assertTrue(any("parsed result" in message for message in debug_logs.output))
         self.assertIsNone(client._parse_result_block('<div class="gs_r gs_or"><div>Missing title</div></div>'))
-        self.assertEqual(client._extract_title_and_url("<div>no title</div>"), ("", None))
-        self.assertEqual(client._extract_block_text(client.SNIPPET_PATTERN if hasattr(client, "SNIPPET_PATTERN") else __import__("re").compile("x"), "<div></div>"), "")
+        self.assertEqual(_extract_title_and_url("<div>no title</div>"), ("", None))
+        self.assertEqual(_extract_block_text(client.SNIPPET_PATTERN if hasattr(client, "SNIPPET_PATTERN") else __import__("re").compile("x"), "<div></div>"), "")
         self.assertIsNone(client._extract_url(__import__("re").compile("missing"), "<div></div>"))
-        self.assertEqual(client._extract_doi("no doi here"), "")
-        self.assertEqual(client._parse_meta(""), ([], "", None))
-        self.assertEqual(client._clean_html_text("<b>Hello</b> &amp; world"), "Hello & world")
+        self.assertEqual(_extract_doi("no doi here"), "")
+        self.assertEqual(_parse_meta(""), ([], "", None))
+        self.assertEqual(_clean_html_text("<b>Hello</b> &amp; world"), "Hello & world")
 
     def test_http_rate_limiting_and_backoff_cover_remaining_paths(self) -> None:
         limiter = http.RateLimiter(calls_per_second=0.0, max_requests_per_minute=1, request_delay_seconds=2.0)
@@ -407,24 +429,6 @@ class FeatureBranchCoverageTests(unittest.TestCase):
         maybe_paper = self._paper(title="Evaluation of oversight workflows", abstract="Governance evaluation with limited detail.")
         exclude_paper = self._paper(title="Clinical biomarkers", abstract="Biomarker study without governance signals.")
         topic_block = TopicMatchResult(
-            similarity=0.20,
-            score=20.0,
-            threshold=55.0,
-            review_threshold=0.55,
-            high_threshold=0.75,
-            model_name="mini",
-            enabled=True,
-            classification="LOW_RELEVANCE",
-            should_exclude=True,
-            keyword_overlap_score=0.0,
-            matched_keywords=[],
-            source_sections=["title"],
-            explanation="Low relevance.",
-            research_fit_label="WEAK_FIT",
-            weighted_keyword_score=12.0,
-            min_keyword_matches=1,
-            matched_keyword_count=0,
-            keyword_rule_count=1,
         )
 
         self.assertEqual(scorer.quick_screen(include_paper), "include")
@@ -432,31 +436,13 @@ class FeatureBranchCoverageTests(unittest.TestCase):
         self.assertEqual(scorer.quick_screen(exclude_paper), "exclude")
         self.assertEqual(scorer.quick_screen(include_paper, topic_match=topic_block), "exclude")
         self.assertIsNone(scorer.evaluate_topic_match(include_paper))
-        self.assertEqual(scorer._classify_domain("unrelated topic"), "general")
+        self.assertEqual(_classify_domain("unrelated topic"), "general")
         self.assertEqual(scorer._decision_from_score(71.0, "maybe"), "include")
         self.assertEqual(scorer._decision_from_score(65.0, "maybe"), "maybe")
         strict_scorer = RelevanceScorer(self.config.model_copy(update={"decision_mode": "strict"}))
         self.assertEqual(strict_scorer._decision_from_score(60.0, "include"), "exclude")
 
         review_topic_match = TopicMatchResult(
-            similarity=0.60,
-            score=60.0,
-            threshold=55.0,
-            review_threshold=0.55,
-            high_threshold=0.75,
-            model_name="mini",
-            enabled=True,
-            classification="REVIEW",
-            should_exclude=False,
-            keyword_overlap_score=0.4,
-            matched_keywords=["AI governance"],
-            source_sections=["title", "abstract"],
-            explanation="Review-level relevance.",
-            research_fit_label="NEAR_FIT",
-            weighted_keyword_score=58.0,
-            min_keyword_matches=1,
-            matched_keyword_count=1,
-            keyword_rule_count=1,
         )
         result = scorer.deep_score(include_paper, stage_one_decision="include", topic_match=review_topic_match)
         self.assertIn("semantic_topic_match", result.evaluation_breakdown)
@@ -474,10 +460,10 @@ class FeatureBranchCoverageTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(first, db_path)
 
-        fingerprint_path = generator._artifact_fingerprint_path(db_path)
+        fingerprint_path = _artifact_fingerprint_path(db_path)
         fingerprint_path.write_text("fingerprint", encoding="utf-8")
         with patch("pathlib.Path.read_text", side_effect=OSError("boom")):
-            self.assertIsNone(generator._read_artifact_fingerprint(db_path))
+            self.assertIsNone(_read_artifact_fingerprint(db_path))
 
     def test_europe_pmc_and_core_edge_branches_cover_fallback_metadata(self) -> None:
         europe_client = EuropePMCClient(self.config.model_copy(update={"europe_pmc_enabled": True}))
@@ -562,7 +548,7 @@ class FeatureBranchCoverageTests(unittest.TestCase):
         with patch("pathlib.Path.read_text", side_effect=OSError("boom")):
             generator._write_text_artifact(artifact_path, "new")
         self.assertEqual(artifact_path.read_text(encoding="utf-8"), "new")
-        self.assertIsNone(generator._read_artifact_fingerprint(Path(config.results_dir) / "missing.db"))
+        self.assertIsNone(_read_artifact_fingerprint(Path(config.results_dir) / "missing.db"))
 
         scholar = GoogleScholarClient(config.model_copy(update={"verbosity": "ultra_verbose"}))
         skipped = scholar._parse_page('<div class="gs_r gs_or"><h3 class="gs_rt"></h3></div>')
@@ -608,8 +594,8 @@ class FeatureBranchCoverageTests(unittest.TestCase):
 
         manual_path = Path(self.temp_dir.name) / "manual.csv"
         manual_path.write_text("title\nPaper A\n", encoding="utf-8")
-        manual_client = ManualImportClient(self.config, path=manual_path)
-        self.assertFalse(manual_client._to_bool(None))
+        ManualImportClient(self.config, path=manual_path)
+        self.assertFalse(_to_bool(None))
 
         papers = [self._paper(title="Alpha", doi=None), self._paper(title="Beta", doi=None)]
         with patch("utils.deduplication.cosine_similarity", return_value=np.array([[1.0, 0.5], [0.5, 1.0]])), \

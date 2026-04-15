@@ -18,6 +18,9 @@ from typing import Any, Sequence
 class CoverageFileSummary:
     """Normalized coverage details for a single source file."""
 
+    def __init__(self):
+        pass
+
     path: str
     statements: int
     covered_lines: int
@@ -40,6 +43,9 @@ class CoverageFileSummary:
 @dataclass(slots=True)
 class CoverageSummary:
     """Aggregate coverage metrics plus the worst-covered files."""
+
+    def __init__(self):
+        pass
 
     total_statements: int
     covered_lines: int
@@ -120,11 +126,6 @@ def summarize_coverage_payload(payload: dict[str, Any]) -> CoverageSummary:
         summary = details.get("summary", {})
         files.append(
             CoverageFileSummary(
-                path=path,
-                statements=int(summary.get("num_statements", 0)),
-                covered_lines=int(summary.get("covered_lines", 0)),
-                missing_lines=[int(line) for line in details.get("missing_lines", [])],
-                percent_covered=float(summary.get("percent_covered", 0.0)),
             )
         )
 
@@ -132,11 +133,6 @@ def summarize_coverage_payload(payload: dict[str, Any]) -> CoverageSummary:
 
     totals = payload.get("totals", {})
     return CoverageSummary(
-        total_statements=int(totals.get("num_statements", 0)),
-        covered_lines=int(totals.get("covered_lines", 0)),
-        missing_lines=int(totals.get("missing_lines", 0)),
-        percent_covered=float(totals.get("percent_covered", 0.0)),
-        files=files,
     )
 
 
@@ -280,9 +276,9 @@ def run_coverage_report(argv: Sequence[str] | None = None) -> int:
             env=coverage_env,
         )
         pytest_output = (
-            "Pytest-cov plugin was not available, so coverage_report.py used the built-in "
-            "coverage.py fallback runner.\n\n"
-            + _format_subprocess_output(report_result)
+                "Pytest-cov plugin was not available, so coverage_report.py used the built-in "
+                "coverage.py fallback runner.\n\n"
+                + _format_subprocess_output(report_result)
         )
         if coverage_data_path.exists():
             export_result, export_output = _export_coverage_artifacts_with_coverage_py(
@@ -384,12 +380,12 @@ def _pytest_cov_is_available() -> bool:
 
 
 def _build_pytest_cov_command(
-    *,
-    python_executable: str,
-    coverage_config_path: Path,
-    raw_json_path: Path,
-    html_dir: Path,
-    junit_xml_path: Path,
+        *,
+        python_executable: str,
+        coverage_config_path: Path,
+        raw_json_path: Path,
+        html_dir: Path,
+        junit_xml_path: Path,
 ) -> list[str]:
     """Build the preferred pytest command that relies on the `pytest-cov` plugin."""
 
@@ -409,11 +405,11 @@ def _build_pytest_cov_command(
 
 
 def _build_coverage_fallback_pytest_command(
-    *,
-    python_executable: str,
-    coverage_data_path: Path,
-    coverage_config_path: Path,
-    junit_xml_path: Path,
+        *,
+        python_executable: str,
+        coverage_data_path: Path,
+        coverage_config_path: Path,
+        junit_xml_path: Path,
 ) -> list[str]:
     """Build a fallback pytest command that runs under `coverage.py` directly."""
 
@@ -433,14 +429,14 @@ def _build_coverage_fallback_pytest_command(
 
 
 def _export_coverage_artifacts_with_coverage_py(
-    *,
-    python_executable: str,
-    coverage_data_path: Path,
-    coverage_config_path: Path,
-    raw_json_path: Path,
-    html_dir: Path,
-    cwd: Path,
-    env: dict[str, str],
+        *,
+        python_executable: str,
+        coverage_data_path: Path,
+        coverage_config_path: Path,
+        raw_json_path: Path,
+        html_dir: Path,
+        cwd: Path,
+        env: dict[str, str],
 ) -> tuple[subprocess.CompletedProcess[str], str]:
     """Export JSON and HTML coverage artifacts using the `coverage.py` CLI fallback."""
 
@@ -478,10 +474,10 @@ def _export_coverage_artifacts_with_coverage_py(
 
 
 def _run_subprocess(
-    command: Sequence[str],
-    *,
-    cwd: Path,
-    env: dict[str, str],
+        command: Sequence[str],
+        *,
+        cwd: Path,
+        env: dict[str, str],
 ) -> subprocess.CompletedProcess[str]:
     """Run one subprocess in text mode and capture stdout/stderr for reporting."""
 

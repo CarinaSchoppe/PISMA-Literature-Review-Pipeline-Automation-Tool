@@ -39,6 +39,36 @@ THEORY_TERMS = {
 }
 
 
+def _matched_terms(text: str, terms: list[str]) -> list[str]:
+    normalized = normalize_title(text)
+    matches: list[str] = []
+    for term in terms:
+        candidate = normalize_title(term)
+        if candidate and candidate in normalized:
+            matches.append(term)
+    return matches
+
+
+def _citation_score(citation_count: int) -> float:
+    if citation_count <= 0:
+        return 10.0
+    return min(100.0, math.log10(citation_count + 1) / math.log10(501) * 100.0)
+
+
+def _classify_domain(text: str) -> str:
+    for label, patterns in DOMAIN_PATTERNS.items():
+        if any(pattern in text for pattern in patterns):
+            return label
+    return "general"
+
+
+def _classify_methodology(text: str) -> str:
+    for label, patterns in METHODOLOGY_PATTERNS.items():
+        if any(pattern in text for pattern in patterns):
+            return label
+    return "unspecified"
+
+
 class RelevanceScorer:
     """Score papers against the review brief using transparent heuristic criteria."""
 
@@ -50,8 +80,8 @@ class RelevanceScorer:
         """Return whether banned themes or excluded title markers force rejection."""
 
         combined_text = f"{paper.title}. {paper.abstract}"
-        return bool(self._matched_terms(combined_text, self.config.banned_topics)) or bool(
-            self._matched_terms(paper.title, self.config.excluded_title_terms)
+        return bool(_matched_terms(combined_text, self.config.banned_topics)) or bool(
+            _matched_terms(paper.title, self.config.excluded_title_terms)
         )
 
     def quick_screen(
@@ -94,12 +124,12 @@ class RelevanceScorer:
         """Compute the final relevance score, explanation, and structured decision payload."""
 
         combined_text = normalize_title(f"{paper.title}. {paper.abstract}")
-        methodology_category = self._classify_methodology(combined_text)
-        domain_category = self._classify_domain(combined_text)
-        matched_inclusion = self._matched_terms(combined_text, self.config.inclusion_criteria)
-        matched_exclusion = self._matched_terms(combined_text, self.config.exclusion_criteria)
-        matched_banned = self._matched_terms(combined_text, self.config.banned_topics)
-        matched_excluded_title_terms = self._matched_terms(paper.title, self.config.excluded_title_terms)
+        methodology_category = _classify_methodology(combined_text)
+        domain_category = _classify_domain(combined_text)
+        matched_inclusion = _matched_terms(combined_text, self.config.inclusion_criteria)
+        matched_exclusion = _matched_terms(combined_text, self.config.exclusion_criteria)
+        matched_banned = _matched_terms(combined_text, self.config.banned_topics)
+        matched_excluded_title_terms = _matched_terms(paper.title, self.config.excluded_title_terms)
         keyword_topic_score = keyword_overlap_score(
             combined_text,
             [
@@ -122,7 +152,7 @@ class RelevanceScorer:
         methodology_score = 90.0 if methodology_category != "unspecified" else 35.0
         theoretical_score = min(100.0, 15.0 * sum(term in combined_text for term in THEORY_TERMS))
         recency_score = self._recency_score(paper.year)
-        citation_score = self._citation_score(paper.citation_count)
+        citation_score = _citation_score(paper.citation_count)
 
         relevance_score = (
                                   0.40 * topic_score
@@ -248,28 +278,11 @@ class RelevanceScorer:
             return None
         return self.topic_matcher.score_paper(paper)
 
-    def _classify_methodology(self, text: str) -> str:
-        for label, patterns in METHODOLOGY_PATTERNS.items():
-            if any(pattern in text for pattern in patterns):
-                return label
-        return "unspecified"
-
-    def _classify_domain(self, text: str) -> str:
-        for label, patterns in DOMAIN_PATTERNS.items():
-            if any(pattern in text for pattern in patterns):
-                return label
-        return "general"
-
     def _recency_score(self, year: int | None) -> float:
         if not year:
             return 40.0
         span = max(self.config.year_range_end - self.config.year_range_start, 1)
         return max(0.0, min(100.0, 100.0 * (year - self.config.year_range_start) / span))
-
-    def _citation_score(self, citation_count: int) -> float:
-        if citation_count <= 0:
-            return 10.0
-        return min(100.0, math.log10(citation_count + 1) / math.log10(501) * 100.0)
 
     def _decision_from_score(
             self,
@@ -293,12 +306,3 @@ class RelevanceScorer:
         if score >= self.config.relevance_threshold - self.config.maybe_threshold_margin:
             return "maybe"
         return "exclude"
-
-    def _matched_terms(self, text: str, terms: list[str]) -> list[str]:
-        normalized = normalize_title(text)
-        matches: list[str] = []
-        for term in terms:
-            candidate = normalize_title(term)
-            if candidate and candidate in normalized:
-                matches.append(term)
-        return matches

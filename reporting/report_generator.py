@@ -17,6 +17,216 @@ from models.paper import PaperMetadata
 from utils.text_processing import top_terms
 
 
+def _format_counts(counts: dict[str, int]) -> str:
+    return ", ".join(f"{label} ({count})" for label, count in list(counts.items())[:5]) or "none"
+
+
+def _count_values(values: list[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for value in values:
+        counts[value] = counts.get(value, 0) + 1
+    return dict(sorted(counts.items(), key=lambda item: item[1], reverse=True))
+
+
+def _collect_pass_names(papers: list[PaperMetadata]) -> list[str]:
+    pass_names: set[str] = set()
+    for paper in papers:
+        pass_names.update(paper.screening_details.get("passes", {}).keys())
+    return sorted(pass_names)
+
+
+def _paper_to_dict(paper: PaperMetadata, pass_names: list[str] | None = None) -> dict[str, Any]:
+    payload = {
+        "database_id": paper.database_id,
+        "title": paper.title,
+        "authors": "; ".join(paper.authors),
+        "abstract": paper.abstract,
+        "year": paper.year,
+        "venue": paper.venue,
+        "doi": paper.doi,
+        "source": paper.source,
+        "citation_count": paper.citation_count,
+        "reference_count": paper.reference_count,
+        "pdf_link": paper.pdf_link,
+        "pdf_path": paper.pdf_path,
+        "open_access": paper.open_access,
+        "relevance_score": paper.relevance_score,
+        "relevance_explanation": paper.relevance_explanation,
+        "topic_prefilter_score": paper.screening_details.get("topic_prefilter_score"),
+        "topic_prefilter_similarity": paper.screening_details.get("topic_prefilter_similarity"),
+        "topic_prefilter_model": paper.screening_details.get("topic_prefilter_model"),
+        "topic_prefilter_threshold": paper.screening_details.get("topic_prefilter_threshold"),
+        "topic_prefilter_label": paper.screening_details.get("topic_prefilter_label"),
+        "topic_prefilter_keyword_overlap": paper.screening_details.get("topic_prefilter_keyword_overlap"),
+        "topic_prefilter_research_fit_label": paper.screening_details.get("topic_prefilter_research_fit_label"),
+        "topic_prefilter_weighted_score": paper.screening_details.get("topic_prefilter_weighted_score"),
+        "topic_prefilter_min_keyword_matches": paper.screening_details.get("topic_prefilter_min_keyword_matches"),
+        "topic_prefilter_matched_keyword_count": paper.screening_details.get("topic_prefilter_matched_keyword_count"),
+        "topic_prefilter_keyword_rule_count": paper.screening_details.get("topic_prefilter_keyword_rule_count"),
+        "topic_prefilter_extracted_topics": json.dumps(
+            paper.screening_details.get("topic_prefilter_extracted_topics", []),
+            ensure_ascii=False,
+        ),
+        "topic_prefilter_keyword_details": json.dumps(
+            paper.screening_details.get("topic_prefilter_keyword_details", []),
+            ensure_ascii=False,
+        ),
+        "inclusion_decision": paper.inclusion_decision,
+        "retain_reason": paper.screening_details.get("retain_reason", ""),
+        "exclusion_reason": paper.screening_details.get("exclusion_reason", ""),
+        "matched_inclusion_criteria": json.dumps(
+            paper.screening_details.get("matched_inclusion_criteria", []),
+            ensure_ascii=False,
+        ),
+        "matched_exclusion_criteria": json.dumps(
+            paper.screening_details.get("matched_exclusion_criteria", []),
+            ensure_ascii=False,
+        ),
+        "matched_banned_topics": json.dumps(
+            paper.screening_details.get("matched_banned_topics", []),
+            ensure_ascii=False,
+        ),
+        "matched_excluded_title_terms": json.dumps(
+            paper.screening_details.get("matched_excluded_title_terms", []),
+            ensure_ascii=False,
+        ),
+        "references": json.dumps(paper.references, ensure_ascii=False),
+        "citations": json.dumps(paper.citations, ensure_ascii=False),
+        "extracted_passage": paper.extracted_passage,
+        "methodology_category": paper.methodology_category,
+        "domain_category": paper.domain_category,
+    }
+    passes = paper.screening_details.get("passes", {})
+    for pass_name in pass_names or []:
+        pass_payload = passes.get(pass_name, {})
+        payload[f"pass_{pass_name}_score"] = pass_payload.get("relevance_score")
+        payload[f"pass_{pass_name}_decision"] = pass_payload.get("decision")
+        payload[f"pass_{pass_name}_reason"] = (
+                pass_payload.get("skip_reason")
+                or pass_payload.get("retain_reason")
+                or pass_payload.get("exclusion_reason")
+                or pass_payload.get("explanation")
+                or ""
+        )
+        payload[f"pass_{pass_name}_provider"] = pass_payload.get("llm_provider", "")
+        payload[f"pass_{pass_name}_model"] = pass_payload.get("model_name", "")
+        payload[f"pass_{pass_name}_threshold"] = pass_payload.get("threshold")
+        payload[f"pass_{pass_name}_min_input_score"] = pass_payload.get("min_input_score")
+        payload[f"pass_{pass_name}_skipped"] = pass_payload.get("skipped", False)
+    return payload
+
+
+def _paper_to_dict_keys(pass_names: list[str] | None = None) -> list[str]:
+    keys = [
+        "database_id",
+        "title",
+        "authors",
+        "abstract",
+        "year",
+        "venue",
+        "doi",
+        "source",
+        "citation_count",
+        "reference_count",
+        "pdf_link",
+        "pdf_path",
+        "open_access",
+        "relevance_score",
+        "relevance_explanation",
+        "topic_prefilter_score",
+        "topic_prefilter_similarity",
+        "topic_prefilter_model",
+        "topic_prefilter_threshold",
+        "topic_prefilter_label",
+        "topic_prefilter_keyword_overlap",
+        "topic_prefilter_research_fit_label",
+        "topic_prefilter_weighted_score",
+        "topic_prefilter_min_keyword_matches",
+        "topic_prefilter_matched_keyword_count",
+        "topic_prefilter_keyword_rule_count",
+        "topic_prefilter_extracted_topics",
+        "topic_prefilter_keyword_details",
+        "inclusion_decision",
+        "retain_reason",
+        "exclusion_reason",
+        "matched_inclusion_criteria",
+        "matched_exclusion_criteria",
+        "matched_banned_topics",
+        "matched_excluded_title_terms",
+        "references",
+        "citations",
+        "extracted_passage",
+        "methodology_category",
+        "domain_category",
+    ]
+    for pass_name in pass_names or []:
+        keys.extend(
+            [
+                f"pass_{pass_name}_score",
+                f"pass_{pass_name}_decision",
+                f"pass_{pass_name}_reason",
+                f"pass_{pass_name}_provider",
+                f"pass_{pass_name}_model",
+                f"pass_{pass_name}_threshold",
+                f"pass_{pass_name}_min_input_score",
+                f"pass_{pass_name}_skipped",
+            ]
+        )
+    return keys
+
+
+def _artifact_fingerprint_path(path: Path) -> Path:
+    """Return the sidecar file used to track the latest artifact fingerprint."""
+
+    return path.with_suffix(path.suffix + ".sha256")
+
+
+def _dataframe_fingerprint(dataframe: pd.DataFrame) -> str:
+    """Build a stable fingerprint for incremental artifact comparisons."""
+
+    payload = dataframe.to_json(orient="records", date_format="iso", force_ascii=False)
+    return sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _rank_papers(papers: list[PaperMetadata]) -> list[PaperMetadata]:
+    """Sort papers so exports and summaries emphasize the strongest candidates first."""
+
+    return sorted(
+        papers,
+        key=lambda paper: (
+            paper.relevance_score if paper.relevance_score is not None else -1.0,
+            paper.citation_count,
+            paper.year or 0,
+        ),
+        reverse=True,
+    )
+
+
+def _papers_to_dataframe(papers: list[PaperMetadata]) -> pd.DataFrame:
+    pass_names = _collect_pass_names(papers)
+    if not papers:
+        return pd.DataFrame(columns=_paper_to_dict_keys(pass_names))
+    return pd.DataFrame([_paper_to_dict(paper, pass_names) for paper in papers])
+
+
+def _write_artifact_fingerprint(path: Path, fingerprint: str) -> None:
+    """Persist the current fingerprint so incremental runs can skip unchanged rewrites."""
+
+    _artifact_fingerprint_path(path).write_text(fingerprint, encoding="utf-8")
+
+
+def _read_artifact_fingerprint(path: Path) -> str | None:
+    """Load a stored artifact fingerprint when the sidecar file exists."""
+
+    fingerprint_path = _artifact_fingerprint_path(path)
+    if not fingerprint_path.exists():
+        return None
+    try:
+        return fingerprint_path.read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
 class ReportGenerator:
     """Render the pipeline state into CSV, JSON, Markdown, and SQLite outputs."""
 
@@ -28,7 +238,7 @@ class ReportGenerator:
         """Generate all configured artifacts and return a mapping of logical names to file paths."""
 
         self._clear_previous_outputs()
-        ranked = self._rank_papers(papers)
+        ranked = _rank_papers(papers)
         scored = [paper for paper in ranked if paper.relevance_score is not None]
         final_threshold = self._final_threshold()
         shortlisted = [
@@ -107,39 +317,26 @@ class ReportGenerator:
             path = Path(self.config.results_dir) / filename
             if path.exists():
                 path.unlink()
-            fingerprint_path = self._artifact_fingerprint_path(path)
+            fingerprint_path = _artifact_fingerprint_path(path)
             if fingerprint_path.exists():
                 fingerprint_path.unlink()
 
-    def _rank_papers(self, papers: list[PaperMetadata]) -> list[PaperMetadata]:
-        """Sort papers so exports and summaries emphasize the strongest candidates first."""
-
-        return sorted(
-            papers,
-            key=lambda paper: (
-                paper.relevance_score if paper.relevance_score is not None else -1.0,
-                paper.citation_count,
-                paper.year or 0,
-            ),
-            reverse=True,
-        )
-
     def _write_csv(self, papers: list[PaperMetadata]) -> Path:
         path = Path(self.config.results_dir) / "papers.csv"
-        dataframe = self._papers_to_dataframe(papers)
+        dataframe = _papers_to_dataframe(papers)
         self._write_dataframe_csv(path, dataframe)
         return path
 
     def _write_top_papers_json(self, papers: list[PaperMetadata]) -> Path:
         path = Path(self.config.results_dir) / "top_papers.json"
-        pass_names = self._collect_pass_names(papers)
-        payload = [self._paper_to_dict(paper, pass_names) for paper in papers[:25]]
+        pass_names = _collect_pass_names(papers)
+        payload = [_paper_to_dict(paper, pass_names) for paper in papers[:25]]
         self._write_json_artifact(path, payload)
         return path
 
     def _write_decision_csv(self, filename: str, papers: list[PaperMetadata]) -> Path:
         path = Path(self.config.results_dir) / filename
-        self._write_dataframe_csv(path, self._papers_to_dataframe(papers))
+        self._write_dataframe_csv(path, _papers_to_dataframe(papers))
         return path
 
     def _write_citation_graph(self, papers: list[PaperMetadata]) -> Path:
@@ -270,10 +467,10 @@ class ReportGenerator:
 
     def _write_decision_database(self, filename: str, table_name: str, papers: list[PaperMetadata]) -> Path:
         path = Path(self.config.results_dir) / filename
-        dataframe = self._papers_to_dataframe(papers)
-        fingerprint = self._dataframe_fingerprint(dataframe)
+        dataframe = _papers_to_dataframe(papers)
+        fingerprint = _dataframe_fingerprint(dataframe)
         if self.config.incremental_report_regeneration and path.exists():
-            if self._read_artifact_fingerprint(path) == fingerprint:
+            if _read_artifact_fingerprint(path) == fingerprint:
                 return path
         engine = create_engine(f"sqlite:///{path}")
         try:
@@ -281,7 +478,7 @@ class ReportGenerator:
                 dataframe.to_sql(table_name, connection, if_exists="replace", index=False)
         finally:
             engine.dispose()
-        self._write_artifact_fingerprint(path, fingerprint)
+        _write_artifact_fingerprint(path, fingerprint)
         return path
 
     def _write_dataframe_csv(self, path: Path, dataframe: pd.DataFrame) -> None:
@@ -308,105 +505,14 @@ class ReportGenerator:
         with path.open("w", encoding="utf-8", newline="\n") as handle:
             handle.write(normalized_content)
 
-    def _dataframe_fingerprint(self, dataframe: pd.DataFrame) -> str:
-        """Build a stable fingerprint for incremental artifact comparisons."""
-
-        payload = dataframe.to_json(orient="records", date_format="iso", force_ascii=False)
-        return sha256(payload.encode("utf-8")).hexdigest()
-
-    def _artifact_fingerprint_path(self, path: Path) -> Path:
-        """Return the sidecar file used to track the latest artifact fingerprint."""
-
-        return path.with_suffix(path.suffix + ".sha256")
-
-    def _read_artifact_fingerprint(self, path: Path) -> str | None:
-        """Load a stored artifact fingerprint when the sidecar file exists."""
-
-        fingerprint_path = self._artifact_fingerprint_path(path)
-        if not fingerprint_path.exists():
-            return None
-        try:
-            return fingerprint_path.read_text(encoding="utf-8").strip() or None
-        except OSError:
-            return None
-
-    def _write_artifact_fingerprint(self, path: Path, fingerprint: str) -> None:
-        """Persist the current fingerprint so incremental runs can skip unchanged rewrites."""
-
-        self._artifact_fingerprint_path(path).write_text(fingerprint, encoding="utf-8")
-
-    def _papers_to_dataframe(self, papers: list[PaperMetadata]) -> pd.DataFrame:
-        pass_names = self._collect_pass_names(papers)
-        if not papers:
-            return pd.DataFrame(columns=self._paper_to_dict_keys(pass_names))
-        return pd.DataFrame([self._paper_to_dict(paper, pass_names) for paper in papers])
-
-    def _paper_to_dict_keys(self, pass_names: list[str] | None = None) -> list[str]:
-        keys = [
-            "database_id",
-            "title",
-            "authors",
-            "abstract",
-            "year",
-            "venue",
-            "doi",
-            "source",
-            "citation_count",
-            "reference_count",
-            "pdf_link",
-            "pdf_path",
-            "open_access",
-            "relevance_score",
-            "relevance_explanation",
-            "topic_prefilter_score",
-            "topic_prefilter_similarity",
-            "topic_prefilter_model",
-            "topic_prefilter_threshold",
-            "topic_prefilter_label",
-            "topic_prefilter_keyword_overlap",
-            "topic_prefilter_research_fit_label",
-            "topic_prefilter_weighted_score",
-            "topic_prefilter_min_keyword_matches",
-            "topic_prefilter_matched_keyword_count",
-            "topic_prefilter_keyword_rule_count",
-            "topic_prefilter_extracted_topics",
-            "topic_prefilter_keyword_details",
-            "inclusion_decision",
-            "retain_reason",
-            "exclusion_reason",
-            "matched_inclusion_criteria",
-            "matched_exclusion_criteria",
-            "matched_banned_topics",
-            "matched_excluded_title_terms",
-            "references",
-            "citations",
-            "extracted_passage",
-            "methodology_category",
-            "domain_category",
-        ]
-        for pass_name in pass_names or []:
-            keys.extend(
-                [
-                    f"pass_{pass_name}_score",
-                    f"pass_{pass_name}_decision",
-                    f"pass_{pass_name}_reason",
-                    f"pass_{pass_name}_provider",
-                    f"pass_{pass_name}_model",
-                    f"pass_{pass_name}_threshold",
-                    f"pass_{pass_name}_min_input_score",
-                    f"pass_{pass_name}_skipped",
-                ]
-            )
-        return keys
-
     def _heuristic_summary(self, ranked: list[PaperMetadata], shortlisted: list[PaperMetadata]) -> str:
         """Create a compact summary when no external LLM summary is available."""
 
         scored = [paper for paper in ranked if paper.relevance_score is not None]
         candidate_set = shortlisted or scored[:10] or ranked[:10]
         top_keywords = top_terms([f"{paper.title} {paper.abstract}" for paper in candidate_set], limit=10)
-        method_counts = self._count_values([paper.methodology_category or "unspecified" for paper in candidate_set])
-        domain_counts = self._count_values([paper.domain_category or "general" for paper in candidate_set])
+        method_counts = _count_values([paper.methodology_category or "unspecified" for paper in candidate_set])
+        domain_counts = _count_values([paper.domain_category or "general" for paper in candidate_set])
 
         lines = [
             "# Literature Review Summary",
@@ -426,10 +532,10 @@ class ReportGenerator:
             [
                 "",
                 "## Methods",
-                f"Most common methodology labels: {self._format_counts(method_counts)}.",
+                f"Most common methodology labels: {_format_counts(method_counts)}.",
                 "",
                 "## Domains",
-                f"Most common domain labels: {self._format_counts(domain_counts)}.",
+                f"Most common domain labels: {_format_counts(domain_counts)}.",
                 "",
                 "## Gaps",
                 "The shortlist still contains papers with limited methodological specificity or weak theoretical framing. "
@@ -445,103 +551,8 @@ class ReportGenerator:
             )
         return "\n".join(lines)
 
-    def _paper_to_dict(self, paper: PaperMetadata, pass_names: list[str] | None = None) -> dict[str, Any]:
-        payload = {
-            "database_id": paper.database_id,
-            "title": paper.title,
-            "authors": "; ".join(paper.authors),
-            "abstract": paper.abstract,
-            "year": paper.year,
-            "venue": paper.venue,
-            "doi": paper.doi,
-            "source": paper.source,
-            "citation_count": paper.citation_count,
-            "reference_count": paper.reference_count,
-            "pdf_link": paper.pdf_link,
-            "pdf_path": paper.pdf_path,
-            "open_access": paper.open_access,
-            "relevance_score": paper.relevance_score,
-            "relevance_explanation": paper.relevance_explanation,
-            "topic_prefilter_score": paper.screening_details.get("topic_prefilter_score"),
-            "topic_prefilter_similarity": paper.screening_details.get("topic_prefilter_similarity"),
-            "topic_prefilter_model": paper.screening_details.get("topic_prefilter_model"),
-            "topic_prefilter_threshold": paper.screening_details.get("topic_prefilter_threshold"),
-            "topic_prefilter_label": paper.screening_details.get("topic_prefilter_label"),
-            "topic_prefilter_keyword_overlap": paper.screening_details.get("topic_prefilter_keyword_overlap"),
-            "topic_prefilter_research_fit_label": paper.screening_details.get("topic_prefilter_research_fit_label"),
-            "topic_prefilter_weighted_score": paper.screening_details.get("topic_prefilter_weighted_score"),
-            "topic_prefilter_min_keyword_matches": paper.screening_details.get("topic_prefilter_min_keyword_matches"),
-            "topic_prefilter_matched_keyword_count": paper.screening_details.get("topic_prefilter_matched_keyword_count"),
-            "topic_prefilter_keyword_rule_count": paper.screening_details.get("topic_prefilter_keyword_rule_count"),
-            "topic_prefilter_extracted_topics": json.dumps(
-                paper.screening_details.get("topic_prefilter_extracted_topics", []),
-                ensure_ascii=False,
-            ),
-            "topic_prefilter_keyword_details": json.dumps(
-                paper.screening_details.get("topic_prefilter_keyword_details", []),
-                ensure_ascii=False,
-            ),
-            "inclusion_decision": paper.inclusion_decision,
-            "retain_reason": paper.screening_details.get("retain_reason", ""),
-            "exclusion_reason": paper.screening_details.get("exclusion_reason", ""),
-            "matched_inclusion_criteria": json.dumps(
-                paper.screening_details.get("matched_inclusion_criteria", []),
-                ensure_ascii=False,
-            ),
-            "matched_exclusion_criteria": json.dumps(
-                paper.screening_details.get("matched_exclusion_criteria", []),
-                ensure_ascii=False,
-            ),
-            "matched_banned_topics": json.dumps(
-                paper.screening_details.get("matched_banned_topics", []),
-                ensure_ascii=False,
-            ),
-            "matched_excluded_title_terms": json.dumps(
-                paper.screening_details.get("matched_excluded_title_terms", []),
-                ensure_ascii=False,
-            ),
-            "references": json.dumps(paper.references, ensure_ascii=False),
-            "citations": json.dumps(paper.citations, ensure_ascii=False),
-            "extracted_passage": paper.extracted_passage,
-            "methodology_category": paper.methodology_category,
-            "domain_category": paper.domain_category,
-        }
-        passes = paper.screening_details.get("passes", {})
-        for pass_name in pass_names or []:
-            pass_payload = passes.get(pass_name, {})
-            payload[f"pass_{pass_name}_score"] = pass_payload.get("relevance_score")
-            payload[f"pass_{pass_name}_decision"] = pass_payload.get("decision")
-            payload[f"pass_{pass_name}_reason"] = (
-                    pass_payload.get("skip_reason")
-                    or pass_payload.get("retain_reason")
-                    or pass_payload.get("exclusion_reason")
-                    or pass_payload.get("explanation")
-                    or ""
-            )
-            payload[f"pass_{pass_name}_provider"] = pass_payload.get("llm_provider", "")
-            payload[f"pass_{pass_name}_model"] = pass_payload.get("model_name", "")
-            payload[f"pass_{pass_name}_threshold"] = pass_payload.get("threshold")
-            payload[f"pass_{pass_name}_min_input_score"] = pass_payload.get("min_input_score")
-            payload[f"pass_{pass_name}_skipped"] = pass_payload.get("skipped", False)
-        return payload
-
-    def _collect_pass_names(self, papers: list[PaperMetadata]) -> list[str]:
-        pass_names: set[str] = set()
-        for paper in papers:
-            pass_names.update(paper.screening_details.get("passes", {}).keys())
-        return sorted(pass_names)
-
     def _final_threshold(self) -> float:
         resolved_passes = self.config.resolved_analysis_passes
         if resolved_passes:
             return resolved_passes[-1].threshold
         return self.config.relevance_threshold
-
-    def _count_values(self, values: list[str]) -> dict[str, int]:
-        counts: dict[str, int] = {}
-        for value in values:
-            counts[value] = counts.get(value, 0) + 1
-        return dict(sorted(counts.items(), key=lambda item: item[1], reverse=True))
-
-    def _format_counts(self, counts: dict[str, int]) -> str:
-        return ", ".join(f"{label} ({count})" for label, count in list(counts.items())[:5]) or "none"

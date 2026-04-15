@@ -39,6 +39,9 @@ class _FakeGenerator:
 class _FakeTorch:
     """Subset of torch dtypes needed by the local HF client tests."""
 
+    def __init__(self):
+        pass
+
     float16 = "float16"
     bfloat16 = "bfloat16"
 
@@ -178,6 +181,9 @@ class LLMClientTests(unittest.TestCase):
 
     def test_huggingface_client_helper_methods_and_error_branch(self) -> None:
         class ExplodingGenerator:
+            def __init__(self):
+                pass
+
             def __call__(self, messages: object, **kwargs: object):  # noqa: ANN001
                 raise RuntimeError("boom")
 
@@ -202,19 +208,19 @@ class LLMClientTests(unittest.TestCase):
             )
 
         self.assertTrue(client.enabled)
-        self.assertEqual(client._resolve_dtype(_FakeTorch, "auto"), "auto")
-        self.assertEqual(client._resolve_dtype(_FakeTorch, "float16"), "float16")
-        self.assertIsNone(client._resolve_dtype(_FakeTorch, "missing"))
+        self.assertEqual(_resolve_dtype(_FakeTorch, "auto"), "auto")
+        self.assertEqual(_resolve_dtype(_FakeTorch, "float16"), "float16")
+        self.assertIsNone(_resolve_dtype(_FakeTorch, "missing"))
         with patch("analysis.llm_clients.importlib.util.find_spec", return_value=object()):
-            self.assertTrue(client._accelerate_available())
-        self.assertEqual(client._extract_generated_content([{"generated_text": "plain"}]), "plain")
+            self.assertTrue(_accelerate_available())
+        self.assertEqual(_extract_generated_content([{"generated_text": "plain"}]), "plain")
         self.assertEqual(
-            client._extract_generated_content([{"generated_text": [{"content": "assistant output"}]}]),
+            _extract_generated_content([{"generated_text": [{"content": "assistant output"}]}]),
             "assistant output",
         )
-        self.assertEqual(client._extract_generated_content([{"generated_text": ["assistant output"]}]), "assistant output")
-        self.assertIsNone(client._extract_generated_content([{"generated_text": {"unexpected": "shape"}}]))
-        self.assertIsNone(client._extract_generated_content([]))
+        self.assertEqual(_extract_generated_content([{"generated_text": ["assistant output"]}]), "assistant output")
+        self.assertIsNone(_extract_generated_content([{"generated_text": {"unexpected": "shape"}}]))
+        self.assertIsNone(_extract_generated_content([]))
         response = client.chat(system_prompt="sys", user_prompt="user")
         self.assertIsNone(response.content)
 

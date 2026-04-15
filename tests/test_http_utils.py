@@ -40,12 +40,37 @@ class FakeResponse:
     def json(self):
         return self._payload
 
-    def iter_content(self, chunk_size: int = 8192):  # noqa: ARG002 - matches requests API
+    def iter_content(self):  # noqa: ARG002 - matches requests API
         yield from self._chunks
+
+
+def test_rate_limiter_wait_respects_explicit_request_delay() -> None:
+    limiter = http.RateLimiter(calls_per_second=0.0, request_delay_seconds=2.0, name="Semantic Scholar")
+    limiter._last_call = 10.0
+
+    with patch("utils.http.time.monotonic", side_effect=[11.0, 13.0]), patch(
+            "utils.http.time.sleep"
+    ) as sleep_mock:
+        limiter.wait()
+
+    sleep_mock.assert_called_once_with(1.0)
+
+
+def test_rate_limiter_wait_returns_immediately_when_interval_is_disabled() -> None:
+    limiter = http.RateLimiter(calls_per_second=0.0)
+
+    with patch("utils.http.time.sleep") as sleep_mock:
+        limiter.wait()
+
+    sleep_mock.assert_not_called()
 
 
 class HTTPUtilsTests(unittest.TestCase):
     """Exercise the request wrappers and supporting helpers in isolation."""
+
+    def __init__(self, methodName: str = "runTest"):
+        super().__init__(methodName)
+        self.temp_dir = None
 
     def setUp(self) -> None:
         http.configure_http_logging(enabled=True, log_payloads=True)
@@ -91,14 +116,6 @@ class HTTPUtilsTests(unittest.TestCase):
         sleep_mock.assert_called_once()
         self.assertAlmostEqual(sleep_mock.call_args.args[0], 0.4, places=2)
 
-    def test_rate_limiter_wait_returns_immediately_when_interval_is_disabled(self) -> None:
-        limiter = http.RateLimiter(calls_per_second=0.0)
-
-        with patch("utils.http.time.sleep") as sleep_mock:
-            limiter.wait()
-
-        sleep_mock.assert_not_called()
-
     def test_rate_limiter_wait_respects_requests_per_minute_window(self) -> None:
         limiter = http.RateLimiter(calls_per_second=0.0, max_requests_per_minute=1, name="Semantic Scholar")
         limiter._request_history.append(0.0)
@@ -111,17 +128,6 @@ class HTTPUtilsTests(unittest.TestCase):
         sleep_mock.assert_called_once_with(30.0)
         info_log.assert_called_once()
         self.assertEqual(info_log.call_args.args[1], "Semantic Scholar")
-
-    def test_rate_limiter_wait_respects_explicit_request_delay(self) -> None:
-        limiter = http.RateLimiter(calls_per_second=0.0, request_delay_seconds=2.0, name="Semantic Scholar")
-        limiter._last_call = 10.0
-
-        with patch("utils.http.time.monotonic", side_effect=[11.0, 13.0]), patch(
-                "utils.http.time.sleep"
-        ) as sleep_mock:
-            limiter.wait()
-
-        sleep_mock.assert_called_once_with(1.0)
 
     def test_build_session_applies_headers_and_retries(self) -> None:
         session = http.build_session("Agent/1.0", extra_headers={"X-Test": "yes"})

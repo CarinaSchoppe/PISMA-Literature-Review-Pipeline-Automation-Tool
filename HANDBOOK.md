@@ -622,12 +622,12 @@ These settings control scoring, pass chains, and model behavior.
 
 - Optional weighted research keywords used by the stronger research-fit explanation layer.
 - Format:
-  - `keyword`
-  - `keyword|weight`
-  - `keyword|weight|threshold`
+    - `keyword`
+    - `keyword|weight`
+    - `keyword|weight|threshold`
 - Example:
-  - `systematic review|1.8|70`
-  - `large language models|1.4|60`
+    - `systematic review|1.8|70`
+    - `large language models|1.4|60`
 - If the threshold is omitted, the global strong-fit threshold is used.
 - GUI uses a visual keyword-rule builder so you can add, duplicate, remove, and scroll longer rule lists.
 - GUI: `AI Screening`

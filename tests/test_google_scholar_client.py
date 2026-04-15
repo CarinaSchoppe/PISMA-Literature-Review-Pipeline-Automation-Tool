@@ -9,27 +9,28 @@ from config import ResearchConfig
 from discovery.google_scholar_client import GoogleScholarClient
 
 
+def _config(**overrides) -> ResearchConfig:
+    values = {
+        "research_topic": "AI governance",
+        "search_keywords": ["generative AI", "governance"],
+        "google_scholar_enabled": True,
+        "pages_to_retrieve": 1,
+        "google_scholar_pages": 3,
+        "google_scholar_results_per_page": 2,
+        "results_per_page": 2,
+        "max_papers_to_analyze": 20,
+        "include_pubmed": False,
+        "discovery_strategy": "precise",
+    }
+    values.update(overrides)
+    return ResearchConfig(**values).finalize()
+
+
 class GoogleScholarClientTests(unittest.TestCase):
     """Verify bounded Scholar page retrieval and metadata parsing."""
 
-    def _config(self, **overrides) -> ResearchConfig:
-        values = {
-            "research_topic": "AI governance",
-            "search_keywords": ["generative AI", "governance"],
-            "google_scholar_enabled": True,
-            "pages_to_retrieve": 1,
-            "google_scholar_pages": 3,
-            "google_scholar_results_per_page": 2,
-            "results_per_page": 2,
-            "max_papers_to_analyze": 20,
-            "include_pubmed": False,
-            "discovery_strategy": "precise",
-        }
-        values.update(overrides)
-        return ResearchConfig(**values).finalize()
-
     def test_search_respects_page_depth_and_parses_result_metadata(self) -> None:
-        config = self._config(google_scholar_pages=2, google_scholar_results_per_page=2)
+        config = _config(google_scholar_pages=2, google_scholar_results_per_page=2)
         client = GoogleScholarClient(config)
         page_one = '''
         <div class="gs_r gs_or gs_scl">
@@ -67,7 +68,7 @@ class GoogleScholarClientTests(unittest.TestCase):
         self.assertEqual(request_mock.call_args_list[1].kwargs["params"]["start"], 2)
 
     def test_search_continues_after_blank_page_and_honors_page_limit(self) -> None:
-        config = self._config(google_scholar_pages=3, google_scholar_results_per_page=1)
+        config = _config(google_scholar_pages=3, google_scholar_results_per_page=1)
         client = GoogleScholarClient(config)
         first_page = '<div class="gs_r gs_or"><h3 class="gs_rt"><a href="https://example.org/a">Paper A</a></h3><div class="gs_a">Author - Venue - 2024</div><div class="gs_rs">Abstract A</div></div>'
         third_page = '<div class="gs_r gs_or"><h3 class="gs_rt"><a href="https://example.org/b">Paper B</a></h3><div class="gs_a">Author - Venue - 2023</div><div class="gs_rs">Abstract B</div></div>'
@@ -79,7 +80,7 @@ class GoogleScholarClientTests(unittest.TestCase):
         self.assertEqual(request_mock.call_count, 3)
 
     def test_search_stops_cleanly_when_stop_callback_is_triggered(self) -> None:
-        config = self._config(google_scholar_pages=3, google_scholar_results_per_page=1)
+        config = _config(google_scholar_pages=3, google_scholar_results_per_page=1)
         stop_calls = {"count": 0}
 
         def should_stop() -> bool:
@@ -96,10 +97,10 @@ class GoogleScholarClientTests(unittest.TestCase):
         self.assertEqual(request_mock.call_count, 1)
 
     def test_search_logs_and_breaks_when_stop_is_requested_before_query_starts(self) -> None:
-        client = GoogleScholarClient(self._config(), should_stop=lambda: True)
+        client = GoogleScholarClient(_config(), should_stop=lambda: True)
 
         with patch("discovery.google_scholar_client.LOGGER.info") as info_log, patch(
-            "discovery.google_scholar_client.request_text"
+                "discovery.google_scholar_client.request_text"
         ) as request_mock:
             papers = client.search()
 
@@ -108,7 +109,7 @@ class GoogleScholarClientTests(unittest.TestCase):
         self.assertTrue(any("stopped before query" in str(call.args[0]) for call in info_log.call_args_list))
 
     def test_parse_result_block_handles_plain_title_without_link(self) -> None:
-        client = GoogleScholarClient(self._config())
+        client = GoogleScholarClient(_config())
         block = '''
         <div class="gs_r gs_or">
             <h3 class="gs_rt">[CITATION] Governance without direct link</h3>
@@ -127,8 +128,8 @@ class GoogleScholarClientTests(unittest.TestCase):
 
     def test_google_scholar_page_bounds_reject_non_positive_values(self) -> None:
         with self.assertRaises(ValueError):
-            self._config(google_scholar_pages=0, google_scholar_results_per_page=0)
+            _config(google_scholar_pages=0, google_scholar_results_per_page=0)
 
     def test_google_scholar_page_bounds_reject_values_above_supported_range(self) -> None:
         with self.assertRaises(ValueError):
-            self._config(google_scholar_pages=101)
+            _config(google_scholar_pages=101)

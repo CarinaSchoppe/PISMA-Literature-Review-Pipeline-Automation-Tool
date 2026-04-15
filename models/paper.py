@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from utils.text_processing import canonical_doi, normalize_title
 
@@ -75,7 +75,6 @@ class PaperMetadata(BaseModel):
     raw_payload: dict[str, Any] = Field(default_factory=dict)
     screening_details: dict[str, Any] = Field(default_factory=dict)
 
-    @field_validator("title")
     @classmethod
     def validate_title(cls, value: str) -> str:
         """Reject empty titles and normalize internal whitespace."""
@@ -85,7 +84,6 @@ class PaperMetadata(BaseModel):
             raise ValueError("Paper title cannot be empty")
         return cleaned
 
-    @field_validator("authors", mode="before")
     @classmethod
     def validate_authors(cls, value: Any) -> list[str]:
         """Accept author lists or semicolon-separated author strings."""
@@ -96,14 +94,12 @@ class PaperMetadata(BaseModel):
             return [part.strip() for part in value.split(";") if part.strip()]
         return [str(item).strip() for item in value if str(item).strip()]
 
-    @field_validator("abstract", "venue", mode="before")
     @classmethod
     def validate_text_fields(cls, value: Any) -> str:
         """Normalize abstract and venue fields to compact single-line text."""
 
         return " ".join(str(value or "").split()).strip()
 
-    @field_validator("doi", mode="before")
     @classmethod
     def validate_doi(cls, value: Any) -> str | None:
         """Canonicalize DOI values and collapse empty values to None."""

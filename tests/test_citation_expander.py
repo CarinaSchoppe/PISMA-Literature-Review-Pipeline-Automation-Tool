@@ -10,20 +10,21 @@ from config import ResearchConfig
 from models.paper import PaperMetadata
 
 
+def _config(*, citation_snowballing_enabled: bool = True) -> ResearchConfig:
+    return ResearchConfig(
+        research_topic="AI-assisted literature reviews",
+        search_keywords=["large language models", "screening"],
+        max_papers_to_analyze=4,
+        citation_snowballing_enabled=citation_snowballing_enabled,
+        disable_progress_bars=True,
+    ).finalize()
+
+
 class CitationExpanderTests(unittest.TestCase):
     """Verify citation expansion calls both reference and citation lookups."""
 
-    def _config(self, *, citation_snowballing_enabled: bool = True) -> ResearchConfig:
-        return ResearchConfig(
-            research_topic="AI-assisted literature reviews",
-            search_keywords=["large language models", "screening"],
-            max_papers_to_analyze=4,
-            citation_snowballing_enabled=citation_snowballing_enabled,
-            disable_progress_bars=True,
-        ).finalize()
-
     def test_expand_fetches_backward_and_forward_links_and_updates_database(self) -> None:
-        config = self._config()
+        config = _config()
         database = Mock()
         provider = Mock()
         seed = PaperMetadata(
@@ -48,7 +49,7 @@ class CitationExpanderTests(unittest.TestCase):
         self.assertTrue(all(paper.query_key == config.query_key for paper in expanded))
 
     def test_expand_returns_empty_without_calling_provider_when_disabled(self) -> None:
-        config = self._config(citation_snowballing_enabled=False)
+        config = _config(citation_snowballing_enabled=False)
         database = Mock()
         provider = Mock()
         seed = PaperMetadata(title="Seed Paper", source="openalex")

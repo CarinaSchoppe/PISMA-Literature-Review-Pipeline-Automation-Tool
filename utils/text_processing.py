@@ -48,7 +48,7 @@ def canonical_doi(value: str) -> str:
     """Normalize DOI strings by removing common URL and prefix wrappers."""
 
     cleaned = value.strip().lower()
-    cleaned = cleaned.replace("https://doi.org/", "").replace("http://doi.org/", "")
+    cleaned = cleaned.replace("https://doi.org/", "").replace("https://doi.org/", "")
     cleaned = cleaned.replace("doi:", "").strip()
     return cleaned
 
@@ -129,7 +129,7 @@ def extract_keyphrases(text: str, limit: int = 12) -> list[str]:
     scores: dict[str, float] = {}
     for ngram_size in (3, 2, 1):
         for index in range(len(tokens) - ngram_size + 1):
-            phrase_tokens = tokens[index : index + ngram_size]
+            phrase_tokens = tokens[index: index + ngram_size]
             if len(set(phrase_tokens)) == 1 and ngram_size > 1:
                 continue
             phrase = " ".join(phrase_tokens)

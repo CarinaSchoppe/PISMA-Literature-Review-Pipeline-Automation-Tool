@@ -44,6 +44,39 @@ class PipelineStoppedError(RuntimeError):
     """Raised when the user requests a controlled stop of the active pipeline run."""
 
 
+def _decision_counts(papers: list[PaperMetadata]) -> dict[str, int]:
+    """Count include, maybe, exclude, and unreviewed labels for reporting."""
+
+    counts = {"include": 0, "exclude": 0, "maybe": 0, "unreviewed": 0}
+    for paper in papers:
+        decision = paper.inclusion_decision or "unreviewed"
+        counts[decision] = counts.get(decision, 0) + 1
+    return counts
+
+
+def _paper_cache_key(paper: PaperMetadata) -> str:
+    """Build a stable cache key from metadata plus optional full-text context."""
+
+    fingerprint = stable_hash(
+        "|".join(
+            [
+                paper.identity_key,
+                paper.title,
+                paper.abstract,
+                paper.raw_payload.get("full_text_excerpt", ""),
+            ]
+        ),
+        length=32,
+    )
+    return f"{paper.identity_key}|{fingerprint}"
+
+
+def _serialize_paper_snapshot(paper: PaperMetadata) -> dict[str, Any]:
+    """Return one JSON-safe paper payload for UI result refresh fallbacks."""
+
+    return paper.model_dump(mode="json")
+
+
 class PipelineController:
     """Coordinate the end-to-end literature review workflow for one run configuration."""
 
@@ -220,7 +253,6 @@ class PipelineController:
                         )
                     )
                     if relevant_pdf_updates:
-
                         self.database.upsert_papers(relevant_pdf_updates, self.config.query_key or "")
             final_papers = self._apply_discovery_limits(
                 self._normalize_papers_for_current_context(
@@ -322,17 +354,17 @@ class PipelineController:
         )
 
     def _finalize_run_result(
-        self,
-        *,
-        final_papers: list[PaperMetadata],
-        discovered_count: int,
-        deduplicated_count: int,
-        snowballing_added_count: int,
-        screening_stats: dict[str, int],
-        run_status: str,
-        run_error: str | None = None,
-        emit_completed_event: bool = True,
-        extra_result_fields: dict[str, Any] | None = None,
+            self,
+            *,
+            final_papers: list[PaperMetadata],
+            discovered_count: int,
+            deduplicated_count: int,
+            snowballing_added_count: int,
+            screening_stats: dict[str, int],
+            run_status: str,
+            run_error: str | None = None,
+            emit_completed_event: bool = True,
+            extra_result_fields: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Generate reports, emit artifact events, and build the final result payload."""
 
@@ -350,7 +382,7 @@ class PipelineController:
             self._emit_event("run_completed", stage="pipeline", report_paths=report_paths)
         return {
             **report_paths,
-            "papers_snapshot": [self._serialize_paper_snapshot(paper) for paper in final_papers],
+            "papers_snapshot": [_serialize_paper_snapshot(paper) for paper in final_papers],
             "discovered_count": discovered_count,
             "deduplicated_count": deduplicated_count,
             "database_count": len(final_papers),
@@ -375,18 +407,13 @@ class PipelineController:
             "discovered_count": discovered_count,
             "deduplicated_count": deduplicated_count,
             "snowballing_added_count": snowballing_added_count,
-            "decision_counts": self._decision_counts(final_papers),
+            "decision_counts": _decision_counts(final_papers),
             "screened_count": len([paper for paper in final_papers if paper.inclusion_decision]),
             "newly_screened_count": screening_stats["screened_count"],
             "full_text_screened_count": screening_stats["full_text_screened_count"],
             "run_mode": self.config.run_mode,
             "partial_rerun_mode": self.config.partial_rerun_mode,
         }
-
-    def _serialize_paper_snapshot(self, paper: PaperMetadata) -> dict[str, Any]:
-        """Return one JSON-safe paper payload for UI result refresh fallbacks."""
-
-        return paper.model_dump(mode="json")
 
     def _discover(self) -> list[PaperMetadata]:
         """Collect metadata from fixtures, manual imports, and enabled API clients."""
@@ -603,7 +630,7 @@ class PipelineController:
         for paper in prepared_candidates:
             if paper.database_id is None:
                 continue
-            cache_key = self._paper_cache_key(paper)
+            cache_key = _paper_cache_key(paper)
             cached = self.database.get_cached_screening_entry(cache_key, self.config.screening_context_key)
             if cached is None:
                 uncached_candidates.append(paper)
@@ -659,7 +686,7 @@ class PipelineController:
                         result, screening_details = future.result()
                         self.database.cache_screening_result(
                             paper=paper,
-                            paper_cache_key=self._paper_cache_key(paper),
+                            paper_cache_key=_paper_cache_key(paper),
                             screening_context_key=self.config.screening_context_key,
                             result=result,
                             screening_details=screening_details,
@@ -801,22 +828,6 @@ class PipelineController:
         }
         return final_result, screening_details
 
-    def _paper_cache_key(self, paper: PaperMetadata) -> str:
-        """Build a stable cache key from metadata plus optional full-text context."""
-
-        fingerprint = stable_hash(
-            "|".join(
-                [
-                    paper.identity_key,
-                    paper.title,
-                    paper.abstract,
-                    paper.raw_payload.get("full_text_excerpt", ""),
-                ]
-            ),
-            length=32,
-        )
-        return f"{paper.identity_key}|{fingerprint}"
-
     def _normalize_papers_for_current_context(self, papers: list[PaperMetadata]) -> list[PaperMetadata]:
         """Clear stale screening fields when they were computed under a different screening context."""
 
@@ -840,15 +851,6 @@ class PipelineController:
                 )
             )
         return normalized
-
-    def _decision_counts(self, papers: list[PaperMetadata]) -> dict[str, int]:
-        """Count include, maybe, exclude, and unreviewed labels for reporting."""
-
-        counts = {"include": 0, "exclude": 0, "maybe": 0, "unreviewed": 0}
-        for paper in papers:
-            decision = paper.inclusion_decision or "unreviewed"
-            counts[decision] = counts.get(decision, 0) + 1
-        return counts
 
     def _discover_from_source(
             self,
@@ -1068,14 +1070,13 @@ class PipelineController:
         """Run IO-heavy per-paper work through an asyncio coordination layer."""
 
         self._log_verbose("%s is using async orchestration with %s workers.", desc, worker_count)
-        return asyncio.run(self._map_papers_async_impl(papers, worker, desc=desc, worker_count=worker_count))
+        return asyncio.run(self._map_papers_async_impl(papers, worker, worker_count=worker_count))
 
     async def _map_papers_async_impl(
             self,
             papers: list[PaperMetadata],
             worker: Callable[[PaperMetadata], PaperMetadata],
             *,
-            desc: str,
             worker_count: int,
     ) -> list[PaperMetadata]:
         """Preserve paper order while running synchronous workers through asyncio."""
@@ -1116,11 +1117,11 @@ class PipelineController:
             LOGGER.log(5, message, *args)
 
     def _log_recoverable_exception(
-        self,
-        level: int,
-        message: str,
-        *args: Any,
-        exc: BaseException,
+            self,
+            level: int,
+            message: str,
+            *args: Any,
+            exc: BaseException,
     ) -> None:
         """Keep expected worker/source failures visible without always printing full tracebacks."""
 

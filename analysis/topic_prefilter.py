@@ -20,6 +20,9 @@ ResearchFitLabel = Literal["STRONG_FIT", "NEAR_FIT", "WEAK_FIT"]
 class TopicMatchResult:
     """Structured semantic topic-match result used before deeper screening."""
 
+    def __init__(self):
+        pass
+
     similarity: float
     score: float
     threshold: float
@@ -70,6 +73,103 @@ def load_embedding_runtime() -> tuple[Any, Any, Any]:
     return torch, AutoTokenizer, AutoModel
 
 
+def _resolve_device(torch: Any, configured_device: str) -> Any:
+    """Resolve the configured runtime device into a concrete torch device."""
+
+    normalized = str(configured_device or "auto").strip().lower()
+    if normalized == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if normalized == "cuda" and not torch.cuda.is_available():
+        return torch.device("cpu")
+    return torch.device(normalized)
+
+
+def _weighted_keyword_score(keyword_match_details: list[dict[str, Any]]) -> float:
+    """Collapse per-keyword evidence into one weighted 0-100 score."""
+
+    if not keyword_match_details:
+        return 0.0
+    total_weight = sum(float(detail["weight"]) for detail in keyword_match_details) or 1.0
+    matched_weight = sum(float(detail["weight"]) * float(detail["match_score"]) for detail in keyword_match_details)
+    return (matched_weight / total_weight) * 100.0
+
+
+def _best_lexical_topic_match(
+        keyword_tokens: list[str],
+        normalized_topics: list[tuple[str, str]],
+        normalized_paper_tokens: set[str],
+) -> tuple[float, str]:
+    """Return the strongest lexical overlap match across extracted topics and paper text."""
+
+    best_score = 0.0
+    best_topic = ""
+    for topic, normalized_topic in normalized_topics:
+        topic_tokens = [token for token in normalized_topic.split() if len(token) >= 4]
+        if not topic_tokens:
+            continue
+        overlap = len(set(keyword_tokens) & set(topic_tokens))
+        candidate_score = overlap / max(len(set(keyword_tokens)), 1)
+        if candidate_score > best_score:
+            best_score = candidate_score
+            best_topic = topic
+    overlap = len(set(keyword_tokens) & normalized_paper_tokens)
+    paper_score = overlap / max(len(set(keyword_tokens)), 1)
+    if paper_score > best_score:
+        best_score = paper_score
+        best_topic = "paper text"
+    return best_score, best_topic
+
+
+def _paper_keywords(paper: PaperMetadata) -> list[str]:
+    """Extract keyword-like metadata from the normalized paper payload."""
+
+    for key in ("keywords", "keyword", "index_terms", "subject_terms"):
+        raw_value = paper.raw_payload.get(key)
+        if not raw_value:
+            continue
+        if isinstance(raw_value, str):
+            return [item.strip() for item in raw_value.replace("|", ";").replace(",", ";").split(";") if item.strip()]
+        if isinstance(raw_value, list):
+            return [str(item).strip() for item in raw_value if str(item).strip()]
+    return []
+
+
+def _dedupe_weighted_terms(
+        terms: list[str],
+        weight: float,
+        existing: list[tuple[str, float]] | None = None,
+) -> list[tuple[str, float]]:
+    """Add unique normalized terms with a shared weight."""
+
+    existing_terms = {normalize_title(term) for term, _value in existing or []}
+    deduped: list[tuple[str, float]] = []
+    for term in terms:
+        normalized = normalize_title(term)
+        if not normalized or normalized in existing_terms:
+            continue
+        deduped.append((term.strip(), weight))
+        existing_terms.add(normalized)
+    return deduped
+
+
+def _extract_paper_topics(paper: PaperMetadata, paper_text: str) -> list[str]:
+    """Extract lightweight topics and merge them with any explicit metadata keywords."""
+
+    explicit_keywords = _paper_keywords(paper)
+    combined_candidates = [*explicit_keywords, *extract_keyphrases(paper_text, limit=12)]
+    seen: set[str] = set()
+    topics: list[str] = []
+    for candidate in combined_candidates:
+        normalized = normalize_title(candidate)
+        if not normalized or normalized in seen:
+            continue
+        topics.append(candidate.strip())
+        seen.add(normalized)
+        if len(topics) >= 12:
+            break
+    return topics
+
+
 class LocalTopicMatcher(BaseTopicMatcher):
     """Semantic topic matcher built on a local BERT-family embedding model."""
 
@@ -97,7 +197,7 @@ class LocalTopicMatcher(BaseTopicMatcher):
             )
             torch, auto_tokenizer, auto_model = load_embedding_runtime()
             self._torch = torch
-            self._device = self._resolve_device(torch, config.api_settings.huggingface_device)
+            self._device = _resolve_device(torch, config.api_settings.huggingface_device)
             self._tokenizer, self._model = self._load_cached_model(auto_tokenizer, auto_model)
             self._model.to(self._device)
             self._model.eval()
@@ -114,7 +214,7 @@ class LocalTopicMatcher(BaseTopicMatcher):
         paper_text, sections = self._build_paper_text(paper)
         if not paper_text:
             return None
-        extracted_topics = self._extract_paper_topics(paper, paper_text)
+        extracted_topics = _extract_paper_topics(paper, paper_text)
         keyword_match_details = self._keyword_match_details(paper_text, extracted_topics)
         matched_keywords = [
             detail["keyword"]
@@ -122,7 +222,7 @@ class LocalTopicMatcher(BaseTopicMatcher):
             if bool(detail.get("met_threshold"))
         ]
         matched_keyword_count = len(matched_keywords)
-        weighted_keyword_score = self._weighted_keyword_score(keyword_match_details)
+        weighted_keyword_score = _weighted_keyword_score(keyword_match_details)
         research_fit_label = self._classify_research_fit(weighted_keyword_score, matched_keyword_count)
         try:
             LOGGER.debug("Local topic prefilter embedding generation started for '%s'.", paper.title)
@@ -154,11 +254,11 @@ class LocalTopicMatcher(BaseTopicMatcher):
             ],
         )
         rule_gate_failed = (
-            research_fit_label == "WEAK_FIT"
-            or matched_keyword_count < self.config.topic_prefilter_min_keyword_matches
+                research_fit_label == "WEAK_FIT"
+                or matched_keyword_count < self.config.topic_prefilter_min_keyword_matches
         )
         should_exclude = self.config.topic_prefilter_filter_low_relevance and (
-            classification == "LOW_RELEVANCE" or rule_gate_failed
+                classification == "LOW_RELEVANCE" or rule_gate_failed
         )
         explanation_parts = [
             f"Local BERT topic prefilter model using {self.model_name} measured cosine similarity {similarity:.2f} ({score:.1f}/100).",
@@ -192,26 +292,6 @@ class LocalTopicMatcher(BaseTopicMatcher):
                 "Automatic filtering is enabled, and the paper failed the semantic topic gate or the weighted rule gate, so it will be excluded."
             )
         return TopicMatchResult(
-            similarity=round(similarity, 4),
-            score=round(score, 2),
-            threshold=round(self.threshold, 2),
-            review_threshold=round(self.review_threshold, 4),
-            high_threshold=round(self.high_threshold, 4),
-            model_name=self.model_name,
-            enabled=True,
-            classification=classification,
-            should_exclude=should_exclude,
-            keyword_overlap_score=round(keyword_overlap, 4),
-            research_fit_label=research_fit_label,
-            weighted_keyword_score=round(weighted_keyword_score, 2),
-            min_keyword_matches=self.config.topic_prefilter_min_keyword_matches,
-            matched_keyword_count=matched_keyword_count,
-            keyword_rule_count=len(keyword_match_details),
-            matched_keywords=matched_keywords,
-            extracted_topics=extracted_topics,
-            keyword_match_details=keyword_match_details,
-            source_sections=sections,
-            explanation=" ".join(explanation_parts),
         )
 
     def _load_cached_model(self, auto_tokenizer: Any, auto_model: Any) -> tuple[Any, Any]:
@@ -261,11 +341,11 @@ class LocalTopicMatcher(BaseTopicMatcher):
         if self.config.resolved_topic_prefilter_keyword_rules:
             return list(self.config.resolved_topic_prefilter_keyword_rules)
         weighted_terms: list[tuple[str, float]] = []
-        weighted_terms.extend(self._dedupe_weighted_terms([self.config.research_topic], 1.6))
-        weighted_terms.extend(self._dedupe_weighted_terms([self.config.research_question], 1.35, weighted_terms))
-        weighted_terms.extend(self._dedupe_weighted_terms([self.config.review_objective], 1.2, weighted_terms))
-        weighted_terms.extend(self._dedupe_weighted_terms(self.config.search_keywords, 1.0, weighted_terms))
-        weighted_terms.extend(self._dedupe_weighted_terms(self.config.inclusion_criteria, 0.9, weighted_terms))
+        weighted_terms.extend(_dedupe_weighted_terms([self.config.research_topic], 1.6))
+        weighted_terms.extend(_dedupe_weighted_terms([self.config.research_question], 1.35, weighted_terms))
+        weighted_terms.extend(_dedupe_weighted_terms([self.config.review_objective], 1.2, weighted_terms))
+        weighted_terms.extend(_dedupe_weighted_terms(self.config.search_keywords, 1.0, weighted_terms))
+        weighted_terms.extend(_dedupe_weighted_terms(self.config.inclusion_criteria, 0.9, weighted_terms))
         return [
             TopicKeywordRuleConfig(
                 keyword=term,
@@ -274,24 +354,6 @@ class LocalTopicMatcher(BaseTopicMatcher):
             )
             for term, weight in weighted_terms
         ]
-
-    def _dedupe_weighted_terms(
-        self,
-        terms: list[str],
-        weight: float,
-        existing: list[tuple[str, float]] | None = None,
-    ) -> list[tuple[str, float]]:
-        """Add unique normalized terms with a shared weight."""
-
-        existing_terms = {normalize_title(term) for term, _value in existing or []}
-        deduped: list[tuple[str, float]] = []
-        for term in terms:
-            normalized = normalize_title(term)
-            if not normalized or normalized in existing_terms:
-                continue
-            deduped.append((term.strip(), weight))
-            existing_terms.add(normalized)
-        return deduped
 
     def _build_paper_text(self, paper: PaperMetadata) -> tuple[str, list[str]]:
         """Select the paper text window used for semantic topic comparison."""
@@ -309,7 +371,7 @@ class LocalTopicMatcher(BaseTopicMatcher):
             else:
                 parts.append(paper.abstract)
                 sections.append("abstract")
-        keywords = self._paper_keywords(paper)
+        keywords = _paper_keywords(paper)
         if keywords:
             parts.append(" ".join(keywords))
             sections.append("keywords")
@@ -320,36 +382,6 @@ class LocalTopicMatcher(BaseTopicMatcher):
                 sections.append("full_text_excerpt_fallback")
         combined = " ".join(part.strip() for part in parts if part and part.strip())
         return combined[: self.config.topic_prefilter_max_chars], sections
-
-    def _paper_keywords(self, paper: PaperMetadata) -> list[str]:
-        """Extract keyword-like metadata from the normalized paper payload."""
-
-        for key in ("keywords", "keyword", "index_terms", "subject_terms"):
-            raw_value = paper.raw_payload.get(key)
-            if not raw_value:
-                continue
-            if isinstance(raw_value, str):
-                return [item.strip() for item in raw_value.replace("|", ";").replace(",", ";").split(";") if item.strip()]
-            if isinstance(raw_value, list):
-                return [str(item).strip() for item in raw_value if str(item).strip()]
-        return []
-
-    def _extract_paper_topics(self, paper: PaperMetadata, paper_text: str) -> list[str]:
-        """Extract lightweight topics and merge them with any explicit metadata keywords."""
-
-        explicit_keywords = self._paper_keywords(paper)
-        combined_candidates = [*explicit_keywords, *extract_keyphrases(paper_text, limit=12)]
-        seen: set[str] = set()
-        topics: list[str] = []
-        for candidate in combined_candidates:
-            normalized = normalize_title(candidate)
-            if not normalized or normalized in seen:
-                continue
-            topics.append(candidate.strip())
-            seen.add(normalized)
-            if len(topics) >= 12:
-                break
-        return topics
 
     def _keyword_match_details(self, paper_text: str, extracted_topics: list[str]) -> list[dict[str, Any]]:
         """Return per-keyword research-fit evidence for one paper."""
@@ -366,7 +398,7 @@ class LocalTopicMatcher(BaseTopicMatcher):
                 continue
             exact_score = 1.0 if normalized_keyword in normalized_text else 0.0
             exact_topic = rule.keyword if exact_score >= 1.0 else ""
-            lexical_score, lexical_topic = self._best_lexical_topic_match(
+            lexical_score, lexical_topic = _best_lexical_topic_match(
                 keyword_tokens,
                 normalized_topics,
                 normalized_paper_tokens,
@@ -379,8 +411,8 @@ class LocalTopicMatcher(BaseTopicMatcher):
             best_score = exact_score
             best_topic = exact_topic
             for candidate_score, candidate_topic in (
-                (lexical_score, lexical_topic),
-                (semantic_score, semantic_topic),
+                    (lexical_score, lexical_topic),
+                    (semantic_score, semantic_topic),
             ):
                 if candidate_score > best_score:
                     best_score = candidate_score
@@ -421,37 +453,11 @@ class LocalTopicMatcher(BaseTopicMatcher):
             reverse=True,
         )
 
-    def _best_lexical_topic_match(
-        self,
-        keyword_tokens: list[str],
-        normalized_topics: list[tuple[str, str]],
-        normalized_paper_tokens: set[str],
-    ) -> tuple[float, str]:
-        """Return the strongest lexical overlap match across extracted topics and paper text."""
-
-        best_score = 0.0
-        best_topic = ""
-        for topic, normalized_topic in normalized_topics:
-            topic_tokens = [token for token in normalized_topic.split() if len(token) >= 4]
-            if not topic_tokens:
-                continue
-            overlap = len(set(keyword_tokens) & set(topic_tokens))
-            candidate_score = overlap / max(len(set(keyword_tokens)), 1)
-            if candidate_score > best_score:
-                best_score = candidate_score
-                best_topic = topic
-        overlap = len(set(keyword_tokens) & normalized_paper_tokens)
-        paper_score = overlap / max(len(set(keyword_tokens)), 1)
-        if paper_score > best_score:
-            best_score = paper_score
-            best_topic = "paper text"
-        return best_score, best_topic
-
     def _best_semantic_topic_match(
-        self,
-        keyword: str,
-        semantic_candidates: list[str],
-        paper_text: str,
+            self,
+            keyword: str,
+            semantic_candidates: list[str],
+            paper_text: str,
     ) -> tuple[float, str]:
         """Return the strongest semantic topic match from extracted topics or the full paper text."""
 
@@ -495,26 +501,17 @@ class LocalTopicMatcher(BaseTopicMatcher):
         self._text_embedding_cache[normalized] = embeddings[0]
         return embeddings[0]
 
-    def _weighted_keyword_score(self, keyword_match_details: list[dict[str, Any]]) -> float:
-        """Collapse per-keyword evidence into one weighted 0-100 score."""
-
-        if not keyword_match_details:
-            return 0.0
-        total_weight = sum(float(detail["weight"]) for detail in keyword_match_details) or 1.0
-        matched_weight = sum(float(detail["weight"]) * float(detail["match_score"]) for detail in keyword_match_details)
-        return (matched_weight / total_weight) * 100.0
-
     def _classify_research_fit(self, weighted_keyword_score: float, matched_keyword_count: int) -> ResearchFitLabel:
         """Map weighted keyword evidence to a research-fit label."""
 
         if (
-            weighted_keyword_score >= self.config.topic_prefilter_match_threshold
-            and matched_keyword_count >= self.config.topic_prefilter_min_keyword_matches
+                weighted_keyword_score >= self.config.topic_prefilter_match_threshold
+                and matched_keyword_count >= self.config.topic_prefilter_min_keyword_matches
         ):
             return "STRONG_FIT"
         if (
-            weighted_keyword_score >= self.config.topic_prefilter_near_fit_threshold
-            or matched_keyword_count >= max(self.config.topic_prefilter_min_keyword_matches - 1, 0)
+                weighted_keyword_score >= self.config.topic_prefilter_near_fit_threshold
+                or matched_keyword_count >= max(self.config.topic_prefilter_min_keyword_matches - 1, 0)
         ):
             return "NEAR_FIT"
         return "WEAK_FIT"
@@ -528,16 +525,6 @@ class LocalTopicMatcher(BaseTopicMatcher):
             return "REVIEW"
         return "LOW_RELEVANCE"
 
-    def _resolve_device(self, torch: Any, configured_device: str) -> Any:
-        """Resolve the configured runtime device into a concrete torch device."""
-
-        normalized = str(configured_device or "auto").strip().lower()
-        if normalized == "auto":
-            return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        if normalized == "cuda" and not torch.cuda.is_available():
-            return torch.device("cpu")
-        return torch.device(normalized)
-
     def _embed_texts(self, texts: list[str]) -> Any:
         """Encode and normalize text embeddings for cosine similarity scoring."""
 
@@ -545,16 +532,10 @@ class LocalTopicMatcher(BaseTopicMatcher):
         assert self._model is not None
         assert self._torch is not None
 
-        encoded = self._tokenizer(
-            texts,
-            padding=True,
-            truncation=True,
-            max_length=256,
-            return_tensors="pt",
-        )
+        encoded = self._tokenizer
         encoded = {key: value.to(self._device) for key, value in encoded.items()}
         with self._torch.no_grad():
-            output = self._model(**encoded)
+            output = self._model
         token_embeddings = output.last_hidden_state
         attention_mask = encoded["attention_mask"].unsqueeze(-1).expand(token_embeddings.size()).float()
         pooled = (token_embeddings * attention_mask).sum(dim=1) / attention_mask.sum(dim=1).clamp(min=1e-9)

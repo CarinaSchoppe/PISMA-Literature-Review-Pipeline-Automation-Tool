@@ -50,6 +50,12 @@ def _make_paper(title: str = "Paper Title", **overrides: object) -> PaperMetadat
 class MiscHighCoverageTests(unittest.TestCase):
     """Cover smaller untested branches across the non-UI codebase."""
 
+    def __init__(self, methodName: str = "runTest"):
+        super().__init__(methodName)
+        self.temp_dir = None
+        self.root = None
+        self.config = None
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         root = Path(self.temp_dir.name)
@@ -266,7 +272,7 @@ class MiscHighCoverageTests(unittest.TestCase):
         ranked = [_make_paper(relevance_score=90.0, inclusion_decision="include")]
         summary_path = generator._write_review_summary(ranked, ranked, None)
         self.assertIn("LLM generated summary.", summary_path.read_text(encoding="utf-8"))
-        self.assertIn("pass_fast_score", generator._paper_to_dict_keys(["fast"]))
+        self.assertIn("pass_fast_score", _paper_to_dict_keys(["fast"]))
 
     def test_database_and_coverage_report_main_cover_remaining_helper_branches(self) -> None:
         manager = DatabaseManager(self.config.database_path)
@@ -312,7 +318,7 @@ class MiscHighCoverageTests(unittest.TestCase):
                 "api_settings": self.config.api_settings.model_copy(update={"crossref_mailto": "carina@example.com"}),
             }
         )
-        crossref_client = CrossrefClient(crossref_config)
+        CrossrefClient(crossref_config)
         payload = {"message": {"items": [{"title": ["T1"], "author": [{"given": "Ada", "family": "Lovelace"}]}]}}
         precise_crossref_config = crossref_config.model_copy(update={"discovery_strategy": "precise", "pages_to_retrieve": 1})
         crossref_client = CrossrefClient(precise_crossref_config)

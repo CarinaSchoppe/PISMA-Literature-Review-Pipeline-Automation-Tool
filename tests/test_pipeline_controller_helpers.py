@@ -14,31 +14,44 @@ from models.paper import PaperMetadata, ScreeningResult
 from pipeline.pipeline_controller import PipelineController
 
 
+def _config(root: Path, **overrides) -> ResearchConfig:
+    payload = {
+        "research_topic": "AI-assisted literature reviews",
+        "search_keywords": ["large language models", "screening"],
+        "openalex_enabled": False,
+        "semantic_scholar_enabled": False,
+        "crossref_enabled": False,
+        "include_pubmed": False,
+        "disable_progress_bars": True,
+        "data_dir": root / "data",
+        "papers_dir": root / "papers",
+        "results_dir": root / "results",
+        "database_path": root / "data" / "literature_review.db",
+    }
+    payload.update(overrides)
+    return ResearchConfig(**payload).finalize()
+
+
+def test_log_trace_emits_only_in_ultra_verbose_mode() -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        controller = PipelineController(_config(root, verbosity="ultra_verbose"))
+        try:
+            with patch("pipeline.pipeline_controller.LOGGER.log") as log_mock:
+                controller._log_trace("trace message %s", "value")
+            log_mock.assert_called_once_with(5, "trace message %s", "value")
+        finally:
+            controller.close()
+
+
 class PipelineControllerHelperTests(unittest.TestCase):
     """Exercise controller branches that are awkward to hit through full integration runs."""
-
-    def _config(self, root: Path, **overrides) -> ResearchConfig:
-        payload = {
-            "research_topic": "AI-assisted literature reviews",
-            "search_keywords": ["large language models", "screening"],
-            "openalex_enabled": False,
-            "semantic_scholar_enabled": False,
-            "crossref_enabled": False,
-            "include_pubmed": False,
-            "disable_progress_bars": True,
-            "data_dir": root / "data",
-            "papers_dir": root / "papers",
-            "results_dir": root / "results",
-            "database_path": root / "data" / "literature_review.db",
-        }
-        payload.update(overrides)
-        return ResearchConfig(**payload).finalize()
 
     def test_build_discovery_clients_respects_enabled_sources(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             controller = PipelineController(
-                self._config(
+                _config(
                     root,
                     openalex_enabled=True,
                     semantic_scholar_enabled=True,
@@ -62,7 +75,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
     def test_build_discovery_clients_raises_without_any_source(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            controller = PipelineController(self._config(root))
+            controller = PipelineController(_config(root))
             try:
                 with self.assertRaises(ValueError):
                     controller._build_discovery_clients()
@@ -81,7 +94,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
             researchgate_csv.write_text("title\nResearchGate paper\n", encoding="utf-8")
 
             controller = PipelineController(
-                self._config(
+                _config(
                     root,
                     manual_source_path=manual_json,
                     google_scholar_import_path=google_json,
@@ -96,7 +109,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
     def test_discover_uses_fixture_and_manual_import_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            fixture_config = self._config(root, fixture_data_path=Path("tests/fixtures/offline_papers.json"))
+            fixture_config = _config(root, fixture_data_path=Path("tests/fixtures/offline_papers.json"))
             fixture_controller = PipelineController(fixture_config)
             try:
                 fixture_results = fixture_controller._discover()
@@ -106,7 +119,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
 
             manual_json = root / "manual.json"
             manual_json.write_text(json.dumps([{"title": "Manual paper", "authors": "Ada; Grace"}]), encoding="utf-8")
-            manual_config = self._config(root, manual_source_path=manual_json)
+            manual_config = _config(root, manual_source_path=manual_json)
             manual_controller = PipelineController(manual_config)
             try:
                 results = manual_controller._discover()
@@ -118,7 +131,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
     def test_helper_methods_for_pass_configs_thresholds_and_summary_screener(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config = self._config(
+            config = _config(
                 root,
                 max_discovered_records=2,
                 min_discovered_records=1,
@@ -165,7 +178,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
                 self.assertEqual(len(controller._apply_discovery_limits([PaperMetadata(title="A"), PaperMetadata(title="B"), PaperMetadata(title="C")])), 2)
                 self.assertTrue(controller._below_minimum_discovery_threshold(0))
                 self.assertIs(controller._summary_screener(), controller.pass_screeners["deep"])
-                topic_prefilter_controller = PipelineController(self._config(root, topic_prefilter_enabled=True))
+                topic_prefilter_controller = PipelineController(_config(root, topic_prefilter_enabled=True))
                 self.assertTrue(topic_prefilter_controller._requires_local_llm_serial_execution())
                 self.assertEqual(topic_prefilter_controller._screening_worker_count(), 1)
                 topic_prefilter_controller.close()
@@ -175,7 +188,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
     def test_screening_worker_count_uses_effective_workers_without_local_models(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config = self._config(
+            config = _config(
                 root,
                 topic_prefilter_enabled=False,
                 llm_provider="heuristic",
@@ -192,7 +205,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
     def test_prepare_normalize_counts_and_cache_key_helpers(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            controller = PipelineController(self._config(root, analyze_full_text=True))
+            controller = PipelineController(_config(root, analyze_full_text=True))
             try:
                 paper = PaperMetadata(
                     database_id=1,
@@ -223,7 +236,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
                 )
                 self.assertIsNone(normalized[0].inclusion_decision)
                 self.assertEqual(
-                    controller._decision_counts(
+                    _decision_counts(
                         [
                             PaperMetadata(title="A", source="fixture", inclusion_decision="include"),
                             PaperMetadata(title="B", source="fixture", inclusion_decision="exclude"),
@@ -233,7 +246,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
                     ),
                     {"include": 1, "exclude": 1, "maybe": 1, "unreviewed": 1},
                 )
-                self.assertEqual(controller._paper_cache_key(paper), controller._paper_cache_key(paper))
+                self.assertEqual(_paper_cache_key(paper), _paper_cache_key(paper))
             finally:
                 controller.close()
 
@@ -241,7 +254,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             events: list[dict[str, object]] = []
-            controller = PipelineController(self._config(root), event_sink=events.append)
+            controller = PipelineController(_config(root), event_sink=events.append)
             try:
                 controller._emit_event("custom", stage="x")
                 controller._emit_report_artifacts({"papers_csv": "results/papers.csv"})
@@ -252,22 +265,11 @@ class PipelineControllerHelperTests(unittest.TestCase):
         self.assertEqual(events[0]["event_type"], "custom")
         self.assertEqual(events[1]["event_type"], "artifact_written")
 
-    def test_log_trace_emits_only_in_ultra_verbose_mode(self) -> None:
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            controller = PipelineController(self._config(root, verbosity="ultra_verbose"))
-            try:
-                with patch("pipeline.pipeline_controller.LOGGER.log") as log_mock:
-                    controller._log_trace("trace message %s", "value")
-                log_mock.assert_called_once_with(5, "trace message %s", "value")
-            finally:
-                controller.close()
-
     def test_close_and_request_stop_shutdown_active_executors(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             events: list[dict[str, object]] = []
-            controller = PipelineController(self._config(root), event_sink=events.append)
+            controller = PipelineController(_config(root), event_sink=events.append)
             executor_one = Mock()
             executor_two = Mock()
             controller._active_executors = [executor_one, executor_two]
@@ -282,7 +284,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
     def test_pdf_threshold_logic(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            controller = PipelineController(self._config(root, relevance_threshold=80))
+            controller = PipelineController(_config(root, relevance_threshold=80))
             try:
                 below = PaperMetadata(title="Low", source="fixture", relevance_score=50, inclusion_decision="include")
                 included = PaperMetadata(title="High", source="fixture", relevance_score=90, inclusion_decision="include")
@@ -298,7 +300,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             no_pass_controller = PipelineController(
-                self._config(root, run_mode="collect", verbosity="normal")
+                _config(root, run_mode="collect", verbosity="normal")
             )
             try:
                 self.assertEqual(no_pass_controller._screen_papers(), {"screened_count": 0, "full_text_screened_count": 0})
@@ -306,7 +308,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
                 no_pass_controller.close()
 
             controller = PipelineController(
-                self._config(
+                _config(
                     root,
                     run_mode="analyze",
                     analysis_passes=[{"name": "fast", "llm_provider": "heuristic", "threshold": 60}],
@@ -352,7 +354,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             controller = PipelineController(
-                self._config(
+                _config(
                     root,
                     run_mode="analyze",
                     download_pdfs=True,
@@ -425,7 +427,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
             root = Path(temp_dir)
             events: list[dict[str, object]] = []
             capped_controller = PipelineController(
-                self._config(root, max_discovered_records=1, openalex_enabled=True),
+                _config(root, max_discovered_records=1, openalex_enabled=True),
                 event_sink=events.append,
             )
             try:
@@ -443,7 +445,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
             finally:
                 capped_controller.close()
 
-            failing_controller = PipelineController(self._config(root, openalex_enabled=True))
+            failing_controller = PipelineController(_config(root, openalex_enabled=True))
             try:
                 failing_controller.fixture_client = None
                 failing_controller.manual_import_clients = []
@@ -460,7 +462,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
     def test_discover_can_use_async_network_layer(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            controller = PipelineController(self._config(root, max_workers=4, openalex_enabled=True, enable_async_network_stages=True))
+            controller = PipelineController(_config(root, max_workers=4, openalex_enabled=True, enable_async_network_stages=True))
             try:
                 controller.fixture_client = None
                 controller.manual_import_clients = []
@@ -480,7 +482,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
             root = Path(temp_dir)
             events: list[dict[str, object]] = []
             controller = PipelineController(
-                self._config(root, max_workers=4, max_discovered_records=1, openalex_enabled=True, enable_async_network_stages=True),
+                _config(root, max_workers=4, max_discovered_records=1, openalex_enabled=True, enable_async_network_stages=True),
                 event_sink=events.append,
             )
             try:
@@ -501,7 +503,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
     def test_async_discovery_handles_source_exceptions(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            controller = PipelineController(self._config(root, openalex_enabled=True, enable_async_network_stages=True))
+            controller = PipelineController(_config(root, openalex_enabled=True, enable_async_network_stages=True))
             try:
                 controller.fixture_client = None
                 controller.manual_import_clients = []
@@ -519,7 +521,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
     def test_parallel_mapping_preserves_order_and_caps_worker_counts(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            controller = PipelineController(self._config(root, max_workers=4, verbosity="verbose"))
+            controller = PipelineController(_config(root, max_workers=4, verbosity="verbose"))
             try:
                 papers = [
                     PaperMetadata(title="Paper A", source="fixture"),
@@ -550,7 +552,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
     def test_pdf_batch_queue_splits_work_into_configured_batches(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            controller = PipelineController(self._config(root, pdf_batch_size=2))
+            controller = PipelineController(_config(root, pdf_batch_size=2))
             try:
                 papers = [
                     PaperMetadata(title="A", source="fixture"),
@@ -579,7 +581,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
     def test_pdf_batch_queue_returns_empty_without_work(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            controller = PipelineController(self._config(root, pdf_batch_size=3))
+            controller = PipelineController(_config(root, pdf_batch_size=3))
             try:
                 self.assertEqual(controller._process_pdf_batch_queue([], lambda paper: paper, desc="Empty queue"), [])
             finally:
@@ -588,7 +590,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
     def test_map_papers_async_preserves_order(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            controller = PipelineController(self._config(root, max_workers=3, enable_async_network_stages=True))
+            controller = PipelineController(_config(root, max_workers=3, enable_async_network_stages=True))
             try:
                 papers = [
                     PaperMetadata(title="Paper A", source="fixture"),
@@ -610,7 +612,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
     def test_map_papers_with_executor_can_delegate_to_async_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            controller = PipelineController(self._config(root, max_workers=3, enable_async_network_stages=True))
+            controller = PipelineController(_config(root, max_workers=3, enable_async_network_stages=True))
             try:
                 papers = [
                     PaperMetadata(title="Paper A", source="fixture"),
@@ -627,7 +629,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
     def test_partial_rerun_returns_failure_when_no_stored_records_exist(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            controller = PipelineController(self._config(root, partial_rerun_mode="reporting_only"))
+            controller = PipelineController(_config(root, partial_rerun_mode="reporting_only"))
             try:
                 controller.database.get_papers_for_query = Mock(return_value=[])
                 result = controller._run_partial_rerun()
@@ -639,7 +641,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             controller = PipelineController(
-                self._config(
+                _config(
                     root,
                     run_mode="analyze",
                     partial_rerun_mode="pdfs_screening_reporting",
@@ -670,7 +672,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             controller = PipelineController(
-                self._config(
+                _config(
                     root,
                     run_mode="analyze",
                     analysis_passes=[{"name": "fast", "llm_provider": "heuristic", "threshold": 60}],
@@ -697,7 +699,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
     def test_prepare_and_download_helpers_cover_blank_excerpt_and_no_relevant_pdfs(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            controller = PipelineController(self._config(root, analyze_full_text=True))
+            controller = PipelineController(_config(root, analyze_full_text=True))
             try:
                 paper = PaperMetadata(title="Full text", source="fixture", pdf_path="paper.pdf")
                 with patch.object(controller.full_text_extractor, "extract_excerpt", return_value=""):
@@ -715,7 +717,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
     def test_screen_paper_with_passes_covers_missing_screener_logging_and_empty_config(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config = self._config(
+            config = _config(
                 root,
                 run_mode="analyze",
                 verbosity="verbose",
@@ -732,7 +734,7 @@ class PipelineControllerHelperTests(unittest.TestCase):
                 controller.close()
 
             no_pass_controller = PipelineController(
-                self._config(root, run_mode="collect", verbosity="normal")
+                _config(root, run_mode="collect", verbosity="normal")
             )
             try:
                 with self.assertRaises(ValueError):
@@ -760,11 +762,11 @@ class PipelineControllerHelperTests(unittest.TestCase):
                 no_pass_controller.close()
 
             ultra_verbose_controller = PipelineController(
-                self._config(root, run_mode="collect", verbosity="ultra_verbose")
+                _config(root, run_mode="collect", verbosity="ultra_verbose")
             )
             try:
                 with patch("pipeline.pipeline_controller.LOGGER.log") as log_mock, patch(
-                    "pipeline.pipeline_controller.LOGGER.debug"
+                        "pipeline.pipeline_controller.LOGGER.debug"
                 ) as debug_mock:
                     ultra_verbose_controller._log_recoverable_exception(
                         40,

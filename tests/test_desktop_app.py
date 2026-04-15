@@ -26,6 +26,10 @@ def _walk_widgets(widget: tk.Misc):
 class DesktopWorkbenchTests(unittest.TestCase):
     """Verify the guided desktop UI exposes contextual help for key settings."""
 
+    def __init__(self, methodName: str = "runTest"):
+        super().__init__(methodName)
+        self.workbench = None
+
     def setUp(self) -> None:
         try:
             self.workbench = DesktopWorkbench(SimpleNamespace(config_file=None))
@@ -224,12 +228,12 @@ class DesktopWorkbenchTests(unittest.TestCase):
 
     def test_slider_fields_exist_for_threshold_controls(self) -> None:
         for field_name in (
-            "relevance_threshold",
-            "maybe_threshold_margin",
-            "llm_temperature",
-            "title_similarity_threshold",
-            "topic_prefilter_match_threshold",
-            "topic_prefilter_near_fit_threshold",
+                "relevance_threshold",
+                "maybe_threshold_margin",
+                "llm_temperature",
+                "title_similarity_threshold",
+                "topic_prefilter_match_threshold",
+                "topic_prefilter_near_fit_threshold",
         ):
             self.assertIn(field_name, self.workbench.slider_value_labels)
             self.assertIn(field_name, self.workbench.scalar_vars)
@@ -370,18 +374,18 @@ class DesktopWorkbenchTests(unittest.TestCase):
                 self.assertIn("horizontal", self.workbench.tree_scrollbars[tree_key])
 
         for text_key in (
-            "run_log",
-            "handbook_text",
-            "outputs_preview",
-            "artifact_summary",
-            "charts_summary",
-            "run_history_text",
-            "screening_audit_text",
-            "document_summary",
-            "document_content",
-            "model_summary",
-            "output_summary",
-            "export_preview",
+                "run_log",
+                "handbook_text",
+                "outputs_preview",
+                "artifact_summary",
+                "charts_summary",
+                "run_history_text",
+                "screening_audit_text",
+                "document_summary",
+                "document_content",
+                "model_summary",
+                "output_summary",
+                "export_preview",
         ):
             with self.subTest(text_key=text_key):
                 self.assertIn(text_key, self.workbench.text_scrollbars)
@@ -479,8 +483,8 @@ class DesktopWorkbenchTests(unittest.TestCase):
             )
 
             with patch("ui.desktop_app.filedialog.askopenfilename", return_value=str(pdf_path)), patch.object(
-                self.workbench,
-                "_load_document_render",
+                    self.workbench,
+                    "_load_document_render",
             ) as load_render:
                 self.workbench._open_document_external()
 

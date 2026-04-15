@@ -15,6 +15,59 @@ from .topic_prefilter import build_topic_matcher
 LOGGER = logging.getLogger(__name__)
 
 
+def _parse_json_response(text: str) -> dict[str, Any]:
+    """Extract a JSON object from a raw LLM response, including fenced code blocks."""
+
+    candidate = text.strip()
+    if candidate.startswith("```"):
+        candidate = candidate.strip("`")
+        candidate = candidate.replace("json", "", 1).strip()
+    start = candidate.find("{")
+    end = candidate.rfind("}")
+    if start == -1 or end == -1:
+        return {}
+    candidate = candidate[start: end + 1]
+    try:
+        parsed = json.loads(candidate)
+        return parsed if isinstance(parsed, dict) else {}
+    except json.JSONDecodeError:
+        LOGGER.warning("Failed to decode JSON response: %s", candidate[:500])
+        return {}
+
+
+def _enrich_with_topic_match(
+        result: ScreeningResult,
+        topic_match: Any | None,
+) -> ScreeningResult:
+    """Attach local semantic topic-match details to an LLM-produced screening result."""
+
+    if topic_match is None:
+        return result
+    explanation = result.explanation or ""
+    if topic_match.explanation and topic_match.explanation not in explanation:
+        explanation = f"{explanation} {topic_match.explanation}".strip()
+    payload = result.model_dump()
+    payload.update(
+        {
+            "topic_prefilter_score": topic_match.score,
+            "topic_prefilter_similarity": topic_match.similarity,
+            "topic_prefilter_model": topic_match.model_name,
+            "topic_prefilter_threshold": topic_match.threshold,
+            "topic_prefilter_label": topic_match.classification,
+            "topic_prefilter_keyword_overlap": topic_match.keyword_overlap_score,
+            "topic_prefilter_research_fit_label": topic_match.research_fit_label,
+            "topic_prefilter_weighted_score": topic_match.weighted_keyword_score,
+            "topic_prefilter_min_keyword_matches": topic_match.min_keyword_matches,
+            "topic_prefilter_matched_keyword_count": topic_match.matched_keyword_count,
+            "topic_prefilter_keyword_rule_count": topic_match.keyword_rule_count,
+            "topic_prefilter_extracted_topics": list(topic_match.extracted_topics),
+            "topic_prefilter_keyword_details": list(topic_match.keyword_match_details),
+            "explanation": explanation,
+        }
+    )
+    return ScreeningResult(**payload)
+
+
 class AIScreener:
     """Apply staged relevance screening and optional review summarization."""
 
@@ -67,7 +120,7 @@ class AIScreener:
                 llm_result.decision,
                 llm_result.relevance_score,
             )
-            return self._enrich_with_topic_match(llm_result, topic_match)
+            return _enrich_with_topic_match(llm_result, topic_match)
         return self.scorer.deep_score(paper, stage_one_decision=stage_one, topic_match=topic_match)
 
     def summarize_review(self, papers: list[PaperMetadata]) -> str | None:
@@ -119,7 +172,7 @@ class AIScreener:
         )
         if not response:
             return None
-        parsed = self._parse_json_response(response)
+        parsed = _parse_json_response(response)
         decision = str(parsed.get("decision", "")).lower()
         if decision in {"include", "maybe", "exclude"}:
             return decision
@@ -147,7 +200,7 @@ class AIScreener:
         )
         if not response:
             return None
-        parsed = self._parse_json_response(response)
+        parsed = _parse_json_response(response)
         if not parsed:
             LOGGER.warning(
                 "LLM Stage 2 returned no valid JSON for '%s'; falling back to heuristic scoring.",
@@ -177,7 +230,7 @@ class AIScreener:
                 extracted_passage=str(parsed.get("extracted_passage", "")),
                 methodology_category=str(parsed.get("methodology_category", "unspecified")),
                 domain_category=str(parsed.get("domain_category", "general")),
-                decision=cast(DecisionLabel, decision),
+                decision=decision,
                 matched_inclusion_criteria=list(parsed.get("matched_inclusion_criteria", []) or []),
                 matched_exclusion_criteria=list(parsed.get("matched_exclusion_criteria", []) or []),
                 matched_banned_topics=list(parsed.get("matched_banned_topics", []) or []),
@@ -190,39 +243,6 @@ class AIScreener:
             LOGGER.warning("Could not parse LLM screening response for '%s': %s", paper.title, exc)
             return None
 
-    def _enrich_with_topic_match(
-            self,
-            result: ScreeningResult,
-            topic_match: Any | None,
-    ) -> ScreeningResult:
-        """Attach local semantic topic-match details to an LLM-produced screening result."""
-
-        if topic_match is None:
-            return result
-        explanation = result.explanation or ""
-        if topic_match.explanation and topic_match.explanation not in explanation:
-            explanation = f"{explanation} {topic_match.explanation}".strip()
-        payload = result.model_dump()
-        payload.update(
-            {
-                "topic_prefilter_score": topic_match.score,
-                "topic_prefilter_similarity": topic_match.similarity,
-                "topic_prefilter_model": topic_match.model_name,
-                "topic_prefilter_threshold": topic_match.threshold,
-                "topic_prefilter_label": topic_match.classification,
-                "topic_prefilter_keyword_overlap": topic_match.keyword_overlap_score,
-                "topic_prefilter_research_fit_label": topic_match.research_fit_label,
-                "topic_prefilter_weighted_score": topic_match.weighted_keyword_score,
-                "topic_prefilter_min_keyword_matches": topic_match.min_keyword_matches,
-                "topic_prefilter_matched_keyword_count": topic_match.matched_keyword_count,
-                "topic_prefilter_keyword_rule_count": topic_match.keyword_rule_count,
-                "topic_prefilter_extracted_topics": list(topic_match.extracted_topics),
-                "topic_prefilter_keyword_details": list(topic_match.keyword_match_details),
-                "explanation": explanation,
-            }
-        )
-        return ScreeningResult(**payload)
-
     def _chat_completion(self, *, system_prompt: str, user_prompt: str) -> str | None:
         """Send a chat-style prompt to the configured LLM client."""
 
@@ -233,22 +253,3 @@ class AIScreener:
         if self.config.log_llm_responses and self.config.verbosity == "ultra_verbose" and response.content:
             LOGGER.debug("LLM response: %s", response.content[:2000])
         return response.content
-
-    def _parse_json_response(self, text: str) -> dict[str, Any]:
-        """Extract a JSON object from a raw LLM response, including fenced code blocks."""
-
-        candidate = text.strip()
-        if candidate.startswith("```"):
-            candidate = candidate.strip("`")
-            candidate = candidate.replace("json", "", 1).strip()
-        start = candidate.find("{")
-        end = candidate.rfind("}")
-        if start == -1 or end == -1:
-            return {}
-        candidate = candidate[start: end + 1]
-        try:
-            parsed = json.loads(candidate)
-            return parsed if isinstance(parsed, dict) else {}
-        except json.JSONDecodeError:
-            LOGGER.warning("Failed to decode JSON response: %s", candidate[:500])
-            return {}

@@ -24,6 +24,10 @@ from models.paper import PaperMetadata
 class ProviderContractTests(unittest.TestCase):
     """Verify that every provider returns normalized paper records through the same contract."""
 
+    def __init__(self, methodName: str = "runTest"):
+        super().__init__(methodName)
+        self.config = None
+
     def setUp(self) -> None:
         self.config = ResearchConfig(
             research_topic="Large language models",
@@ -165,9 +169,9 @@ class ProviderContractTests(unittest.TestCase):
 
     def test_feed_and_xml_providers_return_normalized_papers(self) -> None:
         arxiv_feed = """
-        <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+        <feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="https://arxiv.org/schemas/atom">
           <entry>
-            <id>http://arxiv.org/abs/1234.5678</id>
+            <id>https://arxiv.org/abs/1234.5678</id>
             <title>arXiv Paper</title>
             <summary>Preprint summary.</summary>
             <published>2024-02-01T00:00:00Z</published>

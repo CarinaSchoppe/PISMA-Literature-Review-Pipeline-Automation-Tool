@@ -21,6 +21,47 @@ from utils.text_processing import canonical_doi, normalize_title
 LOGGER = logging.getLogger(__name__)
 
 
+def _clean_html_text(value: str) -> str:
+    """Normalize lightweight HTML text snippets into plain text."""
+
+    cleaned = re.sub(r"<[^>]+>", " ", value or "")
+    return " ".join(html.unescape(cleaned).split()).strip()
+
+
+def _looks_like_pdf_link(link: str) -> bool:
+    """Check whether a manual link likely targets a PDF directly."""
+
+    lowered = link.lower()
+    return lowered.endswith(".pdf") or "/pdf/" in lowered or "download=true" in lowered
+
+
+def _infer_title(pdf_path: Path, excerpt: str) -> str:
+    """Infer a readable title from PDF text or the local filename."""
+
+    for line in excerpt.splitlines():
+        cleaned = " ".join(line.split()).strip()
+        if len(cleaned) >= 20:
+            return cleaned[:240]
+    return pdf_path.stem.replace("_", " ").replace("-", " ").strip() or "Manual PDF"
+
+
+def _ensure_pdf_response(response: Response, link: str) -> None:
+    """Reject non-PDF responses before they are written to disk."""
+
+    content_type = (response.headers.get("Content-Type") or "").lower()
+    if "pdf" in content_type or link.lower().endswith(".pdf"):
+        return
+    raise ValueError(f"The URL did not return a PDF document: {link}")
+
+
+def _attach_manual_url_metadata(paper: PaperMetadata, link: str) -> PaperMetadata:
+    """Attach the originating user-supplied URL to a paper payload."""
+
+    external_ids = {**paper.external_ids, "manual_url": link}
+    raw_payload = {"manual_entry_url": link, **paper.raw_payload}
+    return paper.model_copy(update={"external_ids": external_ids, "raw_payload": raw_payload})
+
+
 class ManualPaperIngestor:
     """Build paper metadata from manually supplied links or already-downloaded PDFs."""
 
@@ -55,14 +96,14 @@ class ManualPaperIngestor:
         doi = doi_candidate if doi_candidate and self.DOI_PATTERN.fullmatch(doi_candidate) else ""
         if doi:
             paper = self._paper_from_doi(doi)
-            return self._attach_manual_url_metadata(paper, normalized_link)
+            return _attach_manual_url_metadata(paper, normalized_link)
 
         arxiv_identifier = self._extract_arxiv_identifier(normalized_link)
         if arxiv_identifier:
             paper = self._paper_from_arxiv(arxiv_identifier)
-            return self._attach_manual_url_metadata(paper, normalized_link)
+            return _attach_manual_url_metadata(paper, normalized_link)
 
-        if self._looks_like_pdf_link(normalized_link):
+        if _looks_like_pdf_link(normalized_link):
             pdf_path = self._download_pdf(normalized_link)
             return self._paper_from_local_pdf(pdf_path, source="manual_pdf_url", source_url=normalized_link)
 
@@ -180,19 +221,19 @@ class ManualPaperIngestor:
             pdf_paper = self._paper_from_local_pdf(pdf_path, source="manual_link_pdf", source_url=pdf_link)
             enriched = enriched.merge_with(pdf_paper)
 
-        return self._attach_manual_url_metadata(enriched, link)
+        return _attach_manual_url_metadata(enriched, link)
 
     def _paper_from_local_pdf(
-        self,
-        pdf_path: Path,
-        *,
-        source: str,
-        source_url: str | None = None,
+            self,
+            pdf_path: Path,
+            *,
+            source: str,
+            source_url: str | None = None,
     ) -> PaperMetadata:
         """Build paper metadata from a local PDF and enrich it through DOI metadata when possible."""
 
         excerpt = self.extractor.extract_excerpt(pdf_path) or ""
-        title = self._infer_title(pdf_path, excerpt)
+        title = _infer_title(pdf_path, excerpt)
         doi = canonical_doi(self._extract_doi(excerpt))
         paper = PaperMetadata(
             query_key=self.config.query_key,
@@ -219,13 +260,6 @@ class ManualPaperIngestor:
             return paper
         return enriched.merge_with(paper)
 
-    def _attach_manual_url_metadata(self, paper: PaperMetadata, link: str) -> PaperMetadata:
-        """Attach the originating user-supplied URL to a paper payload."""
-
-        external_ids = {**paper.external_ids, "manual_url": link}
-        raw_payload = {"manual_entry_url": link, **paper.raw_payload}
-        return paper.model_copy(update={"external_ids": external_ids, "raw_payload": raw_payload})
-
     def _download_pdf(self, link: str, *, preferred_stem: str | None = None) -> Path:
         """Download one PDF into the configured paper directory and return the local file path."""
 
@@ -240,20 +274,12 @@ class ManualPaperIngestor:
             counter += 1
         response = self.session.get(link, timeout=self.config.request_timeout_seconds, stream=True)
         response.raise_for_status()
-        self._ensure_pdf_response(response, link)
+        _ensure_pdf_response(response, link)
         with target_path.open("wb") as handle:
             for chunk in response.iter_content(chunk_size=8192):
                 if chunk:
                     handle.write(chunk)
         return target_path
-
-    def _ensure_pdf_response(self, response: Response, link: str) -> None:
-        """Reject non-PDF responses before they are written to disk."""
-
-        content_type = (response.headers.get("Content-Type") or "").lower()
-        if "pdf" in content_type or link.lower().endswith(".pdf"):
-            return
-        raise ValueError(f"The URL did not return a PDF document: {link}")
 
     def _extract_html_title(self, payload: str) -> str:
         """Extract a document title from a simple HTML page response."""
@@ -263,7 +289,7 @@ class ManualPaperIngestor:
             if meta_value:
                 return meta_value
         match = self.TITLE_PATTERN.search(payload)
-        return self._clean_html_text(match.group("title")) if match else ""
+        return _clean_html_text(match.group("title")) if match else ""
 
     def _extract_meta_content(self, payload: str, name: str) -> str:
         """Return one HTML meta content value when the requested tag is present."""
@@ -271,7 +297,7 @@ class ManualPaperIngestor:
         normalized = name.lower()
         for match in self.META_PATTERN.finditer(payload):
             if match.group("name").lower() == normalized:
-                return self._clean_html_text(match.group("content"))
+                return _clean_html_text(match.group("content"))
         return ""
 
     def _extract_doi(self, text: str) -> str:
@@ -298,24 +324,3 @@ class ManualPaperIngestor:
             if ".pdf" in href.lower():
                 return urljoin(base_url, href)
         return None
-
-    def _infer_title(self, pdf_path: Path, excerpt: str) -> str:
-        """Infer a readable title from PDF text or the local filename."""
-
-        for line in excerpt.splitlines():
-            cleaned = " ".join(line.split()).strip()
-            if len(cleaned) >= 20:
-                return cleaned[:240]
-        return pdf_path.stem.replace("_", " ").replace("-", " ").strip() or "Manual PDF"
-
-    def _looks_like_pdf_link(self, link: str) -> bool:
-        """Check whether a manual link likely targets a PDF directly."""
-
-        lowered = link.lower()
-        return lowered.endswith(".pdf") or "/pdf/" in lowered or "download=true" in lowered
-
-    def _clean_html_text(self, value: str) -> str:
-        """Normalize lightweight HTML text snippets into plain text."""
-
-        cleaned = re.sub(r"<[^>]+>", " ", value or "")
-        return " ".join(html.unescape(cleaned).split()).strip()

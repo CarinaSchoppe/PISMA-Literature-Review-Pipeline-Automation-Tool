@@ -13,21 +13,22 @@ from discovery.manual_import_client import ManualImportClient
 from models.paper import PaperMetadata
 
 
+def _config(root: Path, **overrides) -> ResearchConfig:
+    payload = {
+        "research_topic": "AI-assisted literature reviews",
+        "search_keywords": ["llm", "screening"],
+        "include_pubmed": False,
+        "data_dir": root / "data",
+        "papers_dir": root / "papers",
+        "results_dir": root / "results",
+        "database_path": root / "data" / "review.db",
+    }
+    payload.update(overrides)
+    return ResearchConfig(**payload).finalize()
+
+
 class ImportAndFixtureClientTests(unittest.TestCase):
     """Exercise local import modes and their edge cases."""
-
-    def _config(self, root: Path, **overrides) -> ResearchConfig:
-        payload = {
-            "research_topic": "AI-assisted literature reviews",
-            "search_keywords": ["llm", "screening"],
-            "include_pubmed": False,
-            "data_dir": root / "data",
-            "papers_dir": root / "papers",
-            "results_dir": root / "results",
-            "database_path": root / "data" / "review.db",
-        }
-        payload.update(overrides)
-        return ResearchConfig(**payload).finalize()
 
     def test_manual_import_client_supports_json_csv_and_truthy_values(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -53,7 +54,7 @@ class ImportAndFixtureClientTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            config = self._config(root, manual_source_path=json_path)
+            config = _config(root, manual_source_path=json_path)
             json_results = ManualImportClient(config, path=json_path).search()
             csv_results = ManualImportClient(config, path=csv_path).search()
 
@@ -66,7 +67,7 @@ class ImportAndFixtureClientTests(unittest.TestCase):
     def test_manual_import_client_validates_path_and_json_shape(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config = self._config(root)
+            config = _config(root)
             bad_json = root / "bad.json"
             bad_json.write_text(json.dumps({"title": "wrong"}), encoding="utf-8")
 
@@ -98,7 +99,7 @@ class ImportAndFixtureClientTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            config = self._config(root, fixture_data_path=fixture_path)
+            config = _config(root, fixture_data_path=fixture_path)
             client = FixtureDiscoveryClient(config)
 
             search_results = client.search()
@@ -117,7 +118,7 @@ class ImportAndFixtureClientTests(unittest.TestCase):
             root = Path(temp_dir)
             fixture_path = root / "fixture.json"
             fixture_path.write_text(json.dumps({"bad": "shape"}), encoding="utf-8")
-            config = self._config(root, fixture_data_path=fixture_path)
+            config = _config(root, fixture_data_path=fixture_path)
 
             with self.assertRaises(ValueError):
                 FixtureDiscoveryClient(config)

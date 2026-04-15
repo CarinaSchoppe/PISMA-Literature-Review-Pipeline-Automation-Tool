@@ -36,8 +36,47 @@ def _find_button(root: tk.Misc, text: str):
     raise AssertionError(f"Button with text {text!r} not found")
 
 
+def run():
+    return {"run_status": "completed", "papers_csv": "papers.csv", "included_papers_csv": "included.csv", "excluded_papers_csv": "excluded.csv"}
+
+
+def _sample_screening_result(decision: str, score: float) -> ScreeningResult:
+    return ScreeningResult(
+        stage_one_decision="maybe",
+        relevance_score=score,
+        explanation="Manual screening result",
+        extracted_passage="excerpt",
+        methodology_category="review",
+        domain_category="general",
+        decision=decision,
+        topic_prefilter_research_fit_label="STRONG_FIT" if decision == "include" else "NEAR_FIT",
+        topic_prefilter_weighted_score=score,
+        topic_prefilter_matched_keyword_count=2,
+        topic_prefilter_keyword_rule_count=3,
+        topic_prefilter_extracted_topics=["llm screening", "systematic review"],
+        topic_prefilter_keyword_details=[
+            {"keyword": "llm screening", "match_percent": 88.0, "met_threshold": True},
+            {"keyword": "systematic review", "match_percent": 71.0, "met_threshold": True},
+        ],
+    )
+
+
+def _sample_manual_paper(title: str, *, pdf_path: str | None = None):
+    return PaperMetadata(
+        title=title,
+        abstract="A manually supplied paper.",
+        source="manual",
+        pdf_path=pdf_path,
+        raw_payload={"full_text_excerpt": "Manual paper excerpt."},
+    )
+
+
 class DesktopWorkbenchWorkflowTests(unittest.TestCase):
     """Exercise GUI workflows such as file browsing, profiles, result loading, and pass editing."""
+
+    def __init__(self, methodName: str = "runTest"):
+        super().__init__(methodName)
+        self.workbench = None
 
     def setUp(self) -> None:
         try:
@@ -60,7 +99,7 @@ class DesktopWorkbenchWorkflowTests(unittest.TestCase):
             return "data/custom.db"
 
         with patch("ui.desktop_app.filedialog.askdirectory", return_value="results/custom"), patch(
-            "ui.desktop_app.filedialog.asksaveasfilename", side_effect=fake_save_dialog
+                "ui.desktop_app.filedialog.asksaveasfilename", side_effect=fake_save_dialog
         ), patch("ui.desktop_app.filedialog.askopenfilename", return_value="imports/manual.csv"):
             self.workbench._browse_for_field("results_dir", self.workbench.scalar_vars["results_dir"])
             self.workbench._browse_for_field("database_path", self.workbench.scalar_vars["database_path"])
@@ -329,11 +368,11 @@ class DesktopWorkbenchWorkflowTests(unittest.TestCase):
             self.workbench.text_widgets["research_topic"].insert("1.0", "AI-assisted literature review")
 
             with patch("ui.desktop_app.simpledialog.askstring", return_value="https://doi.org/10.1000/test"), patch(
-                "ui.desktop_app.ManualPaperIngestor.ingest_link",
-                return_value=self._sample_manual_paper("Manual link paper"),
+                    "ui.desktop_app.ManualPaperIngestor.ingest_link",
+                    return_value=_sample_manual_paper("Manual link paper"),
             ), patch(
                 "ui.desktop_app.AIScreener.screen",
-                return_value=self._sample_screening_result("include", 82.5),
+                return_value=_sample_screening_result("include", 82.5),
             ):
                 self.workbench._add_manual_paper_link()
 
@@ -359,45 +398,16 @@ class DesktopWorkbenchWorkflowTests(unittest.TestCase):
             self.workbench.text_widgets["research_topic"].insert("1.0", "AI-assisted literature review")
 
             with patch("ui.desktop_app.filedialog.askopenfilename", return_value=str(pdf_path)), patch(
-                "ui.desktop_app.ManualPaperIngestor.ingest_pdf",
-                return_value=self._sample_manual_paper("Manual pdf paper", pdf_path=str(pdf_path)),
+                    "ui.desktop_app.ManualPaperIngestor.ingest_pdf",
+                    return_value=_sample_manual_paper("Manual pdf paper", pdf_path=str(pdf_path)),
             ), patch(
                 "ui.desktop_app.AIScreener.screen",
-                return_value=self._sample_screening_result("maybe", 67.0),
+                return_value=_sample_screening_result("maybe", 67.0),
             ):
                 self.workbench._add_manual_pdf()
 
             self.assertIn("Manual pdf paper", self.workbench.document_summary_text.get("1.0", tk.END))
             self.assertEqual(len(self.workbench.treeviews["all_papers"].get_children()), 1)
-
-    def _sample_manual_paper(self, title: str, *, pdf_path: str | None = None):
-        return PaperMetadata(
-            title=title,
-            abstract="A manually supplied paper.",
-            source="manual",
-            pdf_path=pdf_path,
-            raw_payload={"full_text_excerpt": "Manual paper excerpt."},
-        )
-
-    def _sample_screening_result(self, decision: str, score: float) -> ScreeningResult:
-        return ScreeningResult(
-            stage_one_decision="maybe",
-            relevance_score=score,
-            explanation="Manual screening result",
-            extracted_passage="excerpt",
-            methodology_category="review",
-            domain_category="general",
-            decision=decision,
-            topic_prefilter_research_fit_label="STRONG_FIT" if decision == "include" else "NEAR_FIT",
-            topic_prefilter_weighted_score=score,
-            topic_prefilter_matched_keyword_count=2,
-            topic_prefilter_keyword_rule_count=3,
-            topic_prefilter_extracted_topics=["llm screening", "systematic review"],
-            topic_prefilter_keyword_details=[
-                {"keyword": "llm screening", "match_percent": 88.0, "met_threshold": True},
-                {"keyword": "systematic review", "match_percent": 71.0, "met_threshold": True},
-            ],
-        )
 
     def test_start_run_force_stop_poll_messages_and_open_path_branches(self) -> None:
         class FakeThread:
@@ -421,9 +431,6 @@ class DesktopWorkbenchWorkflowTests(unittest.TestCase):
                 self.event_sink = event_sink
                 self.stop_called = False
 
-            def run(self):
-                return {"run_status": "completed", "papers_csv": "papers.csv", "included_papers_csv": "included.csv", "excluded_papers_csv": "excluded.csv"}
-
             def request_stop(self):
                 self.stop_called = True
 
@@ -432,17 +439,17 @@ class DesktopWorkbenchWorkflowTests(unittest.TestCase):
         self.assertTrue(direct_controller.stop_called)
 
         with patch("ui.desktop_app.PipelineController", FakeController), patch("ui.desktop_app.threading.Thread", FakeThread), patch.object(
-            self.workbench, "_load_records_into_tree"
+                self.workbench, "_load_records_into_tree"
         ) as load_table, patch.object(self.workbench, "_load_outputs") as load_outputs:
             with patch.object(self.workbench, "_validate_guided_text_inputs", return_value=[]), patch(
-                "ui.desktop_app.form_values_to_config",
-                return_value=SimpleNamespace(
-                    log_file_path=Path("results/pipeline.log"),
-                    results_dir=Path("results"),
-                    skip_discovery=False,
-                    run_mode="analyze",
-                    verbosity="normal",
-                ),
+                    "ui.desktop_app.form_values_to_config",
+                    return_value=SimpleNamespace(
+                        log_file_path=Path("results/pipeline.log"),
+                        results_dir=Path("results"),
+                        skip_discovery=False,
+                        run_mode="analyze",
+                        verbosity="normal",
+                    ),
             ):
                 self.workbench._start_run()
             with patch.object(self.workbench.root, "after", return_value=None):
@@ -515,7 +522,7 @@ class DesktopWorkbenchWorkflowTests(unittest.TestCase):
         self.workbench._set_placeholder_text("all_papers_search", "old hidden filter")
 
         with patch.object(self.workbench, "_load_outputs"), patch.object(self.workbench, "_refresh_chart_preview"), patch.object(
-            self.workbench, "_refresh_screening_audit"
+                self.workbench, "_refresh_screening_audit"
         ), patch.object(self.workbench, "_append_run_history"):
             self.workbench._handle_result(
                 {
@@ -532,13 +539,13 @@ class DesktopWorkbenchWorkflowTests(unittest.TestCase):
                                 "inclusion_decision": "include",
                                 "relevance_score": 72.0,
                                 "screening_details": {
-                        "topic_prefilter_research_fit_label": "STRONG_FIT",
-                        "topic_prefilter_weighted_score": 81.0,
-                        "topic_prefilter_matched_keyword_count": 2,
-                        "topic_prefilter_keyword_rule_count": 3,
-                        "topic_prefilter_min_keyword_matches": 1,
-                        "topic_prefilter_label": "HIGH_RELEVANCE",
-                    },
+                                    "topic_prefilter_research_fit_label": "STRONG_FIT",
+                                    "topic_prefilter_weighted_score": 81.0,
+                                    "topic_prefilter_matched_keyword_count": 2,
+                                    "topic_prefilter_keyword_rule_count": 3,
+                                    "topic_prefilter_min_keyword_matches": 1,
+                                    "topic_prefilter_label": "HIGH_RELEVANCE",
+                                },
                             },
                             {
                                 "title": "Paper B",
@@ -549,13 +556,13 @@ class DesktopWorkbenchWorkflowTests(unittest.TestCase):
                                 "inclusion_decision": "exclude",
                                 "relevance_score": 40.0,
                                 "screening_details": {
-                        "topic_prefilter_research_fit_label": "NEAR_FIT",
-                        "topic_prefilter_weighted_score": 48.0,
-                        "topic_prefilter_matched_keyword_count": 1,
-                        "topic_prefilter_keyword_rule_count": 3,
-                        "topic_prefilter_min_keyword_matches": 2,
-                        "topic_prefilter_label": "REVIEW",
-                    },
+                                    "topic_prefilter_research_fit_label": "NEAR_FIT",
+                                    "topic_prefilter_weighted_score": 48.0,
+                                    "topic_prefilter_matched_keyword_count": 1,
+                                    "topic_prefilter_keyword_rule_count": 3,
+                                    "topic_prefilter_min_keyword_matches": 2,
+                                    "topic_prefilter_label": "REVIEW",
+                                },
                             },
                         ],
                     },
@@ -664,7 +671,7 @@ class DesktopWorkbenchWorkflowTests(unittest.TestCase):
             existing = Path(temp_dir) / "file.txt"
             existing.write_text("x", encoding="utf-8")
             with patch("ui.desktop_app.subprocess.run") as run_mock, patch("ui.desktop_app.os.name", "posix"), patch(
-                "ui.desktop_app.sys.platform", "linux"
+                    "ui.desktop_app.sys.platform", "linux"
             ), patch("os.startfile", create=True):
                 self.workbench._open_path(existing)
             run_mock.assert_called_once()

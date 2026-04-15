@@ -49,19 +49,6 @@ class CoverageReportTests(unittest.TestCase):
 
     def test_build_report_artifacts_renders_markdown_text_and_json(self) -> None:
         summary = coverage_report.CoverageSummary(
-            total_statements=100,
-            covered_lines=95,
-            missing_lines=5,
-            percent_covered=95.0,
-            files=[
-                coverage_report.CoverageFileSummary(
-                    path="config.py",
-                    statements=50,
-                    covered_lines=45,
-                    missing_lines=[10, 11, 30],
-                    percent_covered=90.0,
-                )
-            ],
         )
 
         markdown, text_report, json_summary = coverage_report.build_report_artifacts(
@@ -102,7 +89,7 @@ class CoverageReportTests(unittest.TestCase):
     @patch("builtins.print")
     @patch("coverage_report.subprocess.run")
     def test_run_coverage_report_writes_expected_artifacts(self, run_mock, _print_mock, _plugin_available) -> None:
-        def fake_run(command, cwd=None, check=None, text=None, capture_output=False, env=None):
+        def fake_run(command, env=None):
             self.assertIn("COVERAGE_FILE", env)
             self.assertIn("-m", command)
             self.assertIn("pytest", command)
@@ -163,12 +150,12 @@ class CoverageReportTests(unittest.TestCase):
     @patch("builtins.print")
     @patch("coverage_report.subprocess.run")
     def test_run_coverage_report_reports_when_no_threshold_was_requested(
-        self,
-        run_mock,
-        print_mock,
-        _plugin_available,
+            self,
+            run_mock,
+            print_mock,
+            _plugin_available,
     ) -> None:
-        def fake_run(command, cwd=None, check=None, text=None, capture_output=False, env=None):
+        def fake_run(command):
             json_arg = next(part for part in command if part.startswith("--cov-report=json:"))
             html_arg = next(part for part in command if part.startswith("--cov-report=html:"))
             junit_arg = next(part for part in command if part.startswith("--junitxml="))
@@ -207,7 +194,7 @@ class CoverageReportTests(unittest.TestCase):
     @patch("builtins.print")
     @patch("coverage_report.subprocess.run")
     def test_run_coverage_report_can_fail_threshold(self, run_mock, _print_mock, _plugin_available) -> None:
-        def fake_run(command, cwd=None, check=None, text=None, capture_output=False, env=None):
+        def fake_run(command, env=None):
             self.assertIn("COVERAGE_FILE", env)
             json_arg = next(part for part in command if part.startswith("--cov-report=json:"))
             html_arg = next(part for part in command if part.startswith("--cov-report=html:"))
@@ -243,10 +230,10 @@ class CoverageReportTests(unittest.TestCase):
     @patch("builtins.print")
     @patch("coverage_report.subprocess.run")
     def test_run_coverage_report_handles_failed_pytest_before_artifacts_exist(
-        self,
-        run_mock,
-        print_mock,
-        _plugin_available,
+            self,
+            run_mock,
+            print_mock,
+            _plugin_available,
     ) -> None:
         run_mock.return_value = type(
             "Result",
@@ -274,12 +261,12 @@ class CoverageReportTests(unittest.TestCase):
     @patch("builtins.print")
     @patch("coverage_report.subprocess.run")
     def test_run_coverage_report_falls_back_to_coverage_py_when_pytest_cov_is_missing(
-        self,
-        run_mock,
-        print_mock,
-        _plugin_available,
+            self,
+            run_mock,
+            print_mock,
+            _plugin_available,
     ) -> None:
-        def fake_run(command, cwd=None, text=None, capture_output=False, env=None):
+        def fake_run(command):
             if command[:4] == [sys.executable, "-m", "coverage", "run"]:
                 junit_arg = next(part for part in command if part.startswith("--junitxml="))
                 coverage_data_arg = next(part for part in command if part.startswith("--data-file="))
@@ -325,7 +312,7 @@ class CoverageReportTests(unittest.TestCase):
     @patch("builtins.print")
     @patch("coverage_report.subprocess.run")
     def test_run_coverage_report_reports_failed_fallback_export(self, run_mock, print_mock, _plugin_available) -> None:
-        def fake_run(command, cwd=None, text=None, capture_output=False, env=None):
+        def fake_run(command):
             if command[:4] == [sys.executable, "-m", "coverage", "run"]:
                 junit_arg = next(part for part in command if part.startswith("--junitxml="))
                 coverage_data_arg = next(part for part in command if part.startswith("--data-file="))

@@ -30,32 +30,34 @@ class _FakeEnabledLLMClient:
         return SimpleNamespace(content=content)
 
 
+def _paper(**overrides) -> PaperMetadata:
+    payload = {
+        "title": "Large language models for systematic review screening",
+        "abstract": "We evaluate LLM support for systematic review screening workflows.",
+        "year": 2024,
+        "citation_count": 42,
+        "raw_payload": {},
+    }
+    payload.update(overrides)
+    return PaperMetadata(**payload)
+
+
+def _base_config(**overrides) -> ResearchConfig:
+    return ResearchConfig(
+        research_topic="AI-assisted literature reviews",
+        search_keywords=["large language models", "screening", "systematic review"],
+        include_pubmed=False,
+        **overrides,
+    ).finalize()
+
+
 class AIScreenerTests(unittest.TestCase):
     """Verify that malformed LLM outputs do not overwrite heuristic screening results."""
 
-    def _base_config(self, **overrides) -> ResearchConfig:
-        return ResearchConfig(
-            research_topic="AI-assisted literature reviews",
-            search_keywords=["large language models", "screening", "systematic review"],
-            include_pubmed=False,
-            **overrides,
-        ).finalize()
-
-    def _paper(self, **overrides) -> PaperMetadata:
-        payload = {
-            "title": "Large language models for systematic review screening",
-            "abstract": "We evaluate LLM support for systematic review screening workflows.",
-            "year": 2024,
-            "citation_count": 42,
-            "raw_payload": {},
-        }
-        payload.update(overrides)
-        return PaperMetadata(**payload)
-
     def test_hard_exclusion_short_circuits_before_any_llm_call(self) -> None:
         fake_client = _FakeEnabledLLMClient(['{"decision": "include"}'])
-        config = self._base_config(llm_provider="openai_compatible")
-        paper = self._paper(title="Correction: Large language models for systematic review screening")
+        config = _base_config(llm_provider="openai_compatible")
+        paper = _paper(title="Correction: Large language models for systematic review screening")
 
         with patch("analysis.ai_screener.build_llm_client", return_value=fake_client):
             screener = AIScreener(config)
@@ -66,8 +68,8 @@ class AIScreenerTests(unittest.TestCase):
         self.assertEqual(fake_client.calls, [])
 
     def test_heuristic_screening_path_matches_relevance_scorer(self) -> None:
-        config = self._base_config(llm_provider="heuristic", relevance_threshold=50)
-        paper = self._paper()
+        config = _base_config(llm_provider="heuristic", relevance_threshold=50)
+        paper = _paper()
 
         screener = AIScreener(config)
         result = screener.screen(paper)
@@ -83,8 +85,8 @@ class AIScreenerTests(unittest.TestCase):
         self.assertTrue(result.explanation)
 
     def test_invalid_stage_two_json_falls_back_to_heuristic_scoring(self) -> None:
-        config = self._base_config(llm_provider="openai_compatible", relevance_threshold=50)
-        paper = self._paper()
+        config = _base_config(llm_provider="openai_compatible", relevance_threshold=50)
+        paper = _paper()
 
         with patch(
                 "analysis.ai_screener.build_llm_client",
@@ -105,8 +107,8 @@ class AIScreenerTests(unittest.TestCase):
 
     def test_llm_stage_one_exclude_skips_stage_two(self) -> None:
         fake_client = _FakeEnabledLLMClient(['{"decision": "exclude"}'])
-        config = self._base_config(llm_provider="openai_compatible")
-        paper = self._paper()
+        config = _base_config(llm_provider="openai_compatible")
+        paper = _paper()
 
         with patch("analysis.ai_screener.build_llm_client", return_value=fake_client):
             screener = AIScreener(config)
@@ -130,8 +132,8 @@ class AIScreenerTests(unittest.TestCase):
                 ),
             ]
         )
-        config = self._base_config(llm_provider="openai_compatible")
-        paper = self._paper(raw_payload={"full_text_excerpt": "Useful full text context."})
+        config = _base_config(llm_provider="openai_compatible")
+        paper = _paper(raw_payload={"full_text_excerpt": "Useful full text context."})
 
         with patch("analysis.ai_screener.build_llm_client", return_value=fake_client):
             screener = AIScreener(config)
@@ -144,8 +146,8 @@ class AIScreenerTests(unittest.TestCase):
         self.assertEqual(result.retain_reason, "Fits scope")
 
     def test_llm_stage_two_invalid_decision_or_missing_score_falls_back(self) -> None:
-        config = self._base_config(llm_provider="openai_compatible")
-        paper = self._paper()
+        config = _base_config(llm_provider="openai_compatible")
+        paper = _paper()
 
         for stage_two_response in [
             '{"decision": "keep", "relevance_score": 90}',
@@ -166,9 +168,9 @@ class AIScreenerTests(unittest.TestCase):
                 self.assertEqual(result.relevance_score, expected.relevance_score)
 
     def test_llm_stage_two_parse_exception_returns_none(self) -> None:
-        config = self._base_config(llm_provider="openai_compatible")
+        config = _base_config(llm_provider="openai_compatible")
         fake_client = _FakeEnabledLLMClient(['{"decision":"include"}'])
-        paper = self._paper()
+        paper = _paper()
 
         with patch("analysis.ai_screener.build_llm_client", return_value=fake_client):
             screener = AIScreener(config)
@@ -182,16 +184,16 @@ class AIScreenerTests(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_summarize_review_returns_none_without_llm_or_without_papers(self) -> None:
-        config = self._base_config(llm_provider="heuristic")
+        config = _base_config(llm_provider="heuristic")
         screener = AIScreener(config)
 
         self.assertIsNone(screener.summarize_review([]))
-        self.assertIsNone(screener.summarize_review([self._paper()]))
+        self.assertIsNone(screener.summarize_review([_paper()]))
 
     def test_summarize_review_uses_llm_when_available(self) -> None:
         fake_client = _FakeEnabledLLMClient("# Review summary")
-        config = self._base_config(llm_provider="openai_compatible")
-        paper = self._paper(
+        config = _base_config(llm_provider="openai_compatible")
+        paper = _paper(
             raw_payload={"full_text_excerpt": "Long excerpt"},
             methodology_category="survey",
             domain_category="healthcare",
@@ -209,12 +211,12 @@ class AIScreenerTests(unittest.TestCase):
         self.assertIn("Research topic:", fake_client.calls[0][1])
 
     def test_parse_json_response_handles_fenced_and_invalid_payloads(self) -> None:
-        config = self._base_config(llm_provider="heuristic")
-        screener = AIScreener(config)
+        config = _base_config(llm_provider="heuristic")
+        AIScreener(config)
 
-        fenced = screener._parse_json_response("```json\n{\"decision\": \"include\"}\n```")
-        invalid = screener._parse_json_response("not json")
-        malformed = screener._parse_json_response("{not valid json}")
+        fenced = _parse_json_response("```json\n{\"decision\": \"include\"}\n```")
+        invalid = _parse_json_response("not json")
+        malformed = _parse_json_response("{not valid json}")
 
         self.assertEqual(fenced["decision"], "include")
         self.assertEqual(invalid, {})
@@ -222,7 +224,7 @@ class AIScreenerTests(unittest.TestCase):
 
     def test_chat_completion_returns_none_when_client_has_no_content(self) -> None:
         fake_client = _FakeEnabledLLMClient([None])
-        config = self._base_config(llm_provider="openai_compatible", verbosity="ultra_verbose")
+        config = _base_config(llm_provider="openai_compatible", verbosity="ultra_verbose")
 
         with patch("analysis.ai_screener.build_llm_client", return_value=fake_client):
             screener = AIScreener(config)
@@ -232,8 +234,8 @@ class AIScreenerTests(unittest.TestCase):
 
     def test_stage_one_and_stage_two_return_none_when_llm_returns_no_content(self) -> None:
         fake_client = _FakeEnabledLLMClient([None, None])
-        config = self._base_config(llm_provider="openai_compatible")
-        paper = self._paper()
+        config = _base_config(llm_provider="openai_compatible")
+        paper = _paper()
 
         with patch("analysis.ai_screener.build_llm_client", return_value=fake_client):
             screener = AIScreener(config)
@@ -242,8 +244,8 @@ class AIScreenerTests(unittest.TestCase):
 
     def test_stage_one_invalid_decision_returns_none_and_verbose_logs_are_supported(self) -> None:
         fake_client = _FakeEnabledLLMClient(['{"decision":"unknown"}', '{"decision":"maybe"}'])
-        config = self._base_config(llm_provider="openai_compatible", verbosity="verbose")
-        paper = self._paper()
+        config = _base_config(llm_provider="openai_compatible", verbosity="verbose")
+        paper = _paper()
 
         with patch("analysis.ai_screener.build_llm_client", return_value=fake_client):
             screener = AIScreener(config)

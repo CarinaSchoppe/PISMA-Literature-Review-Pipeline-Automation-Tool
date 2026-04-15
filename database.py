@@ -83,6 +83,114 @@ class ScreeningCacheRecord(Base):
     )
 
 
+def _record_to_model(record: PaperRecord) -> PaperMetadata:
+    """Convert an ORM row back into the pipeline's Pydantic model."""
+
+    return PaperMetadata(
+        database_id=record.id,
+        query_key=record.query_key,
+        title=record.title,
+        authors=json.loads(record.authors_json or "[]"),
+        abstract=record.abstract or "",
+        year=record.year,
+        venue=record.venue or "",
+        doi=record.doi,
+        source=record.source or "",
+        citation_count=record.citation_count or 0,
+        reference_count=record.reference_count or 0,
+        pdf_link=record.pdf_link,
+        pdf_path=record.pdf_path,
+        open_access=bool(record.open_access),
+        relevance_score=record.relevance_score,
+        relevance_explanation=record.relevance_explanation,
+        inclusion_decision=record.inclusion_decision,
+        references=json.loads(record.references_json or "[]"),
+        citations=json.loads(record.citations_json or "[]"),
+        extracted_passage=record.extracted_passage,
+        methodology_category=record.methodology_category,
+        domain_category=record.domain_category,
+        external_ids=json.loads(record.external_ids_json or "{}"),
+        raw_payload=json.loads(record.raw_payload_json or "{}"),
+        screening_details=json.loads(record.screening_details_json or "{}"),
+    )
+
+
+def _create_record(paper: PaperMetadata, query_key: str) -> PaperRecord:
+    """Map a validated paper model into a new ORM record."""
+
+    return PaperRecord(
+        query_key=query_key,
+        normalized_title=paper.normalized_title,
+        title=paper.title,
+        authors_json=json.dumps(paper.authors),
+        abstract=paper.abstract,
+        year=paper.year,
+        venue=paper.venue,
+        doi=paper.doi,
+        source=paper.source,
+        citation_count=paper.citation_count,
+        reference_count=paper.reference_count,
+        pdf_link=paper.pdf_link,
+        pdf_path=paper.pdf_path,
+        open_access=paper.open_access,
+        relevance_score=paper.relevance_score,
+        relevance_explanation=paper.relevance_explanation,
+        inclusion_decision=paper.inclusion_decision,
+        references_json=json.dumps(paper.references),
+        citations_json=json.dumps(paper.citations),
+        extracted_passage=paper.extracted_passage,
+        methodology_category=paper.methodology_category,
+        domain_category=paper.domain_category,
+        external_ids_json=json.dumps(paper.external_ids),
+        raw_payload_json=json.dumps(paper.raw_payload),
+        screening_details_json=json.dumps(paper.screening_details),
+    )
+
+
+def _find_existing(session: Session, query_key: str, paper: PaperMetadata) -> PaperRecord | None:
+    """Find an existing row by DOI first and normalized title second."""
+
+    if paper.doi:
+        stmt = select(PaperRecord).where(
+            PaperRecord.query_key == query_key,
+            PaperRecord.doi == canonical_doi(paper.doi),
+        )
+        existing = session.scalars(stmt).first()
+        if existing:
+            return existing
+    stmt = select(PaperRecord).where(
+        PaperRecord.query_key == query_key,
+        PaperRecord.normalized_title == paper.normalized_title,
+    )
+    return session.scalars(stmt).first()
+
+
+def _merge_record(record: PaperRecord, paper: PaperMetadata) -> None:
+    """Merge new metadata into an existing ORM row without losing earlier fields."""
+
+    existing_model = _record_to_model(record)
+    merged = existing_model.merge_with(paper)
+    record.normalized_title = merged.normalized_title
+    record.title = merged.title
+    record.authors_json = json.dumps(merged.authors)
+    record.abstract = merged.abstract
+    record.year = merged.year
+    record.venue = merged.venue
+    record.doi = merged.doi
+    record.source = merged.source
+    record.citation_count = merged.citation_count
+    record.reference_count = merged.reference_count
+    record.pdf_link = merged.pdf_link
+    record.pdf_path = merged.pdf_path
+    record.open_access = merged.open_access
+    record.references_json = json.dumps(merged.references)
+    record.citations_json = json.dumps(merged.citations)
+    record.external_ids_json = json.dumps(merged.external_ids)
+    record.raw_payload_json = json.dumps(merged.raw_payload)
+    if merged.screening_details:
+        record.screening_details_json = json.dumps(merged.screening_details)
+
+
 class DatabaseManager:
     """High-level repository for storing, updating, and reusing pipeline artifacts."""
 
@@ -108,16 +216,16 @@ class DatabaseManager:
         stored: list[PaperMetadata] = []
         with self.SessionLocal() as session:
             for paper in papers:
-                existing = self._find_existing(session, query_key, paper)
+                existing = _find_existing(session, query_key, paper)
                 if existing is None:
-                    record = self._create_record(paper, query_key)
+                    record = _create_record(paper, query_key)
                     session.add(record)
                     session.flush()
-                    stored.append(self._record_to_model(record))
+                    stored.append(_record_to_model(record))
                 else:
-                    self._merge_record(existing, paper)
+                    _merge_record(existing, paper)
                     session.flush()
-                    stored.append(self._record_to_model(existing))
+                    stored.append(_record_to_model(existing))
             session.commit()
         return stored
 
@@ -126,7 +234,7 @@ class DatabaseManager:
 
         with self.SessionLocal() as session:
             stmt = select(PaperRecord).where(PaperRecord.query_key == query_key)
-            return [self._record_to_model(record) for record in session.scalars(stmt).all()]
+            return [_record_to_model(record) for record in session.scalars(stmt).all()]
 
     def get_papers_for_analysis(
             self,
@@ -141,7 +249,7 @@ class DatabaseManager:
             stmt = select(PaperRecord).where(PaperRecord.query_key == query_key)
             stmt = stmt.order_by(PaperRecord.citation_count.desc(), PaperRecord.year.desc().nullslast()).limit(limit)
             records = session.scalars(stmt).all()
-            models = [self._record_to_model(record) for record in records]
+            models = [_record_to_model(record) for record in records]
             if not resume_mode:
                 return models
             filtered: list[PaperMetadata] = []
@@ -316,110 +424,6 @@ class DatabaseManager:
                 session.delete(record)
             session.commit()
             return deleted_count
-
-    def _find_existing(self, session: Session, query_key: str, paper: PaperMetadata) -> PaperRecord | None:
-        """Find an existing row by DOI first and normalized title second."""
-
-        if paper.doi:
-            stmt = select(PaperRecord).where(
-                PaperRecord.query_key == query_key,
-                PaperRecord.doi == canonical_doi(paper.doi),
-            )
-            existing = session.scalars(stmt).first()
-            if existing:
-                return existing
-        stmt = select(PaperRecord).where(
-            PaperRecord.query_key == query_key,
-            PaperRecord.normalized_title == paper.normalized_title,
-        )
-        return session.scalars(stmt).first()
-
-    def _create_record(self, paper: PaperMetadata, query_key: str) -> PaperRecord:
-        """Map a validated paper model into a new ORM record."""
-
-        return PaperRecord(
-            query_key=query_key,
-            normalized_title=paper.normalized_title,
-            title=paper.title,
-            authors_json=json.dumps(paper.authors),
-            abstract=paper.abstract,
-            year=paper.year,
-            venue=paper.venue,
-            doi=paper.doi,
-            source=paper.source,
-            citation_count=paper.citation_count,
-            reference_count=paper.reference_count,
-            pdf_link=paper.pdf_link,
-            pdf_path=paper.pdf_path,
-            open_access=paper.open_access,
-            relevance_score=paper.relevance_score,
-            relevance_explanation=paper.relevance_explanation,
-            inclusion_decision=paper.inclusion_decision,
-            references_json=json.dumps(paper.references),
-            citations_json=json.dumps(paper.citations),
-            extracted_passage=paper.extracted_passage,
-            methodology_category=paper.methodology_category,
-            domain_category=paper.domain_category,
-            external_ids_json=json.dumps(paper.external_ids),
-            raw_payload_json=json.dumps(paper.raw_payload),
-            screening_details_json=json.dumps(paper.screening_details),
-        )
-
-    def _merge_record(self, record: PaperRecord, paper: PaperMetadata) -> None:
-        """Merge new metadata into an existing ORM row without losing earlier fields."""
-
-        existing_model = self._record_to_model(record)
-        merged = existing_model.merge_with(paper)
-        record.normalized_title = merged.normalized_title
-        record.title = merged.title
-        record.authors_json = json.dumps(merged.authors)
-        record.abstract = merged.abstract
-        record.year = merged.year
-        record.venue = merged.venue
-        record.doi = merged.doi
-        record.source = merged.source
-        record.citation_count = merged.citation_count
-        record.reference_count = merged.reference_count
-        record.pdf_link = merged.pdf_link
-        record.pdf_path = merged.pdf_path
-        record.open_access = merged.open_access
-        record.references_json = json.dumps(merged.references)
-        record.citations_json = json.dumps(merged.citations)
-        record.external_ids_json = json.dumps(merged.external_ids)
-        record.raw_payload_json = json.dumps(merged.raw_payload)
-        if merged.screening_details:
-            record.screening_details_json = json.dumps(merged.screening_details)
-
-    def _record_to_model(self, record: PaperRecord) -> PaperMetadata:
-        """Convert an ORM row back into the pipeline's Pydantic model."""
-
-        return PaperMetadata(
-            database_id=record.id,
-            query_key=record.query_key,
-            title=record.title,
-            authors=json.loads(record.authors_json or "[]"),
-            abstract=record.abstract or "",
-            year=record.year,
-            venue=record.venue or "",
-            doi=record.doi,
-            source=record.source or "",
-            citation_count=record.citation_count or 0,
-            reference_count=record.reference_count or 0,
-            pdf_link=record.pdf_link,
-            pdf_path=record.pdf_path,
-            open_access=bool(record.open_access),
-            relevance_score=record.relevance_score,
-            relevance_explanation=record.relevance_explanation,
-            inclusion_decision=record.inclusion_decision,
-            references=json.loads(record.references_json or "[]"),
-            citations=json.loads(record.citations_json or "[]"),
-            extracted_passage=record.extracted_passage,
-            methodology_category=record.methodology_category,
-            domain_category=record.domain_category,
-            external_ids=json.loads(record.external_ids_json or "{}"),
-            raw_payload=json.loads(record.raw_payload_json or "{}"),
-            screening_details=json.loads(record.screening_details_json or "{}"),
-        )
 
     def _ensure_schema(self) -> None:
         """Apply additive schema migrations for databases created by earlier project versions."""

@@ -56,10 +56,6 @@ class BenchmarkReportTests(unittest.TestCase):
             return 5
 
         case = benchmark_report.BenchmarkCase(
-            name="fixture_discovery_search",
-            description="Fixture benchmark",
-            max_seconds=1.0,
-            runner=fake_runner,
         )
 
         with patch(
@@ -83,26 +79,8 @@ class BenchmarkReportTests(unittest.TestCase):
     def test_build_report_artifacts_renders_markdown_text_and_json(self) -> None:
         results = [
             benchmark_report.BenchmarkResult(
-                name="fixture_discovery_search",
-                description="Fixture benchmark",
-                max_seconds=1.0,
-                average_seconds=0.75,
-                median_seconds=0.75,
-                min_seconds=0.70,
-                max_observed_seconds=0.80,
-                iterations_completed=25,
-                regressed=False,
             ),
             benchmark_report.BenchmarkResult(
-                name="query_variant_building",
-                description="Query benchmark",
-                max_seconds=0.20,
-                average_seconds=0.25,
-                median_seconds=0.24,
-                min_seconds=0.21,
-                max_observed_seconds=0.28,
-                iterations_completed=25,
-                regressed=True,
             ),
         ]
 
@@ -120,10 +98,6 @@ class BenchmarkReportTests(unittest.TestCase):
             baseline_path.write_text(json.dumps({}), encoding="utf-8")
             results_dir = root / "results"
             case = benchmark_report.BenchmarkCase(
-                name="fixture_discovery_search",
-                description="Fixture benchmark",
-                max_seconds=5.0,
-                runner=lambda _project_root: 4,
             )
 
             with patch(
@@ -153,10 +127,6 @@ class BenchmarkReportTests(unittest.TestCase):
             self.assertTrue((results_dir / "benchmark_results.csv").exists())
 
             regressing_case = benchmark_report.BenchmarkCase(
-                name="fixture_discovery_search",
-                description="Fixture benchmark",
-                max_seconds=0.10,
-                runner=lambda _project_root: 4,
             )
             with patch(
                     "benchmark_report.time.perf_counter",

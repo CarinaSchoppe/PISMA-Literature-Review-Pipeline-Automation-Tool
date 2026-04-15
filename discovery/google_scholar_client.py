@@ -25,6 +25,55 @@ PDF_LINK_PATTERN = re.compile(r'<div[^>]*class="[^"]*gs_or_ggsm[^"]*"[^>]*>.*?<a
 YEAR_PATTERN = re.compile(r"\b(19|20)\d{2}\b")
 
 
+def _clean_html_text(value: str) -> str:
+    """Collapse HTML fragments into plain display text."""
+
+    return " ".join(strip_markup(unescape(value)).split())
+
+
+def _parse_meta(meta_text: str) -> tuple[list[str], str, int | None]:
+    """Extract authors, venue, and year from the Scholar metadata line."""
+
+    if not meta_text:
+        return [], "", None
+    year_match = YEAR_PATTERN.search(meta_text)
+    year = int(year_match.group(0)) if year_match else None
+    parts = [part.strip() for part in meta_text.split(" - ") if part.strip()]
+    authors = [part.strip() for part in parts[0].split(",") if part.strip()] if parts else []
+    venue = ""
+    if len(parts) >= 2:
+        venue = parts[1]
+    return authors, venue, year
+
+
+def _extract_doi(block: str) -> str:
+    """Look for a DOI anywhere inside the result card."""
+
+    match = DOI_PATTERN.search(block)
+    return match.group(0) if match else ""
+
+
+def _extract_block_text(pattern: re.Pattern[str], block: str) -> str:
+    """Return the cleaned text for a matched metadata or snippet block."""
+
+    match = pattern.search(block)
+    if not match:
+        return ""
+    return _clean_html_text(match.group(1))
+
+
+def _extract_title_and_url(block: str) -> tuple[str, str | None]:
+    """Extract the visible result title and landing URL from one Scholar card."""
+
+    linked_match = TITLE_LINK_PATTERN.search(block)
+    if linked_match:
+        return _clean_html_text(linked_match.group(2)), unescape(linked_match.group(1))
+    plain_match = TITLE_TEXT_PATTERN.search(block)
+    if plain_match:
+        return _clean_html_text(plain_match.group(1)), None
+    return "", None
+
+
 class GoogleScholarClient:
     """Retrieve Google Scholar result pages and normalize them into shared paper metadata."""
 
@@ -125,15 +174,15 @@ class GoogleScholarClient:
     def _parse_result_block(self, block: str) -> PaperMetadata | None:
         """Convert one Scholar result card into the shared paper model."""
 
-        title, result_url = self._extract_title_and_url(block)
+        title, result_url = _extract_title_and_url(block)
         if not title:
             return None
-        meta_text = self._extract_block_text(META_PATTERN, block)
-        snippet = self._extract_block_text(SNIPPET_PATTERN, block)
+        meta_text = _extract_block_text(META_PATTERN, block)
+        snippet = _extract_block_text(SNIPPET_PATTERN, block)
         pdf_url = self._extract_url(PDF_LINK_PATTERN, block)
-        raw_doi = self._extract_doi(block) or self._extract_doi(snippet)
+        raw_doi = _extract_doi(block) or _extract_doi(snippet)
         doi = canonical_doi(raw_doi) or None
-        authors, venue, year = self._parse_meta(meta_text)
+        authors, venue, year = _parse_meta(meta_text)
         if self.config.verbosity == "ultra_verbose":
             LOGGER.debug(
                 "Google Scholar metadata extracted for '%s': authors=%s venue=%s year=%s doi=%s.",
@@ -165,25 +214,6 @@ class GoogleScholarClient:
             },
         )
 
-    def _extract_title_and_url(self, block: str) -> tuple[str, str | None]:
-        """Extract the visible result title and landing URL from one Scholar card."""
-
-        linked_match = TITLE_LINK_PATTERN.search(block)
-        if linked_match:
-            return self._clean_html_text(linked_match.group(2)), unescape(linked_match.group(1))
-        plain_match = TITLE_TEXT_PATTERN.search(block)
-        if plain_match:
-            return self._clean_html_text(plain_match.group(1)), None
-        return "", None
-
-    def _extract_block_text(self, pattern: re.Pattern[str], block: str) -> str:
-        """Return the cleaned text for a matched metadata or snippet block."""
-
-        match = pattern.search(block)
-        if not match:
-            return ""
-        return self._clean_html_text(match.group(1))
-
     def _extract_url(self, pattern: re.Pattern[str], block: str) -> str | None:
         """Extract and normalize a linked URL from a result sub-block."""
 
@@ -191,28 +221,3 @@ class GoogleScholarClient:
         if not match:
             return None
         return urljoin(self.BASE_URL, unescape(match.group(1)))
-
-    def _extract_doi(self, block: str) -> str:
-        """Look for a DOI anywhere inside the result card."""
-
-        match = DOI_PATTERN.search(block)
-        return match.group(0) if match else ""
-
-    def _parse_meta(self, meta_text: str) -> tuple[list[str], str, int | None]:
-        """Extract authors, venue, and year from the Scholar metadata line."""
-
-        if not meta_text:
-            return [], "", None
-        year_match = YEAR_PATTERN.search(meta_text)
-        year = int(year_match.group(0)) if year_match else None
-        parts = [part.strip() for part in meta_text.split(" - ") if part.strip()]
-        authors = [part.strip() for part in parts[0].split(",") if part.strip()] if parts else []
-        venue = ""
-        if len(parts) >= 2:
-            venue = parts[1]
-        return authors, venue, year
-
-    def _clean_html_text(self, value: str) -> str:
-        """Collapse HTML fragments into plain display text."""
-
-        return " ".join(strip_markup(unescape(value)).split())

@@ -15,6 +15,12 @@ from models.paper import PaperMetadata, ScreeningResult
 class DatabaseManagerTests(unittest.TestCase):
     """Exercise upserts, cache storage, and update helpers on a real temp database."""
 
+    def __init__(self, methodName: str = "runTest"):
+        super().__init__(methodName)
+        self.temp_dir = None
+        self.database_path = None
+        self.database = None
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp_dir.cleanup)
@@ -114,10 +120,11 @@ class DatabaseManagerTests(unittest.TestCase):
             connection.execute(
                 text(
                     """
-                    CREATE TABLE papers (
+                    CREATE TABLE papers
+                    (
                         database_id INTEGER PRIMARY KEY,
                         query_key TEXT,
-                        title TEXT
+                        title     TEXT
                     )
                     """
                 )

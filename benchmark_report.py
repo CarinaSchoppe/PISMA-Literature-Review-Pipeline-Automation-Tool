@@ -26,6 +26,9 @@ BenchmarkCallable = Callable[[Path], int]
 class BenchmarkCase:
     """Define one benchmark workload and the baseline threshold used to judge regressions."""
 
+    def __init__(self):
+        pass
+
     name: str
     description: str
     max_seconds: float
@@ -35,6 +38,9 @@ class BenchmarkCase:
 @dataclass(slots=True)
 class BenchmarkResult:
     """Store the measured timing details for one benchmark case."""
+
+    def __init__(self):
+        pass
 
     name: str
     description: str
@@ -139,10 +145,6 @@ def _build_case(
     if baseline is None:
         raise KeyError(f"Missing baseline configuration for benchmark '{name}'")
     return BenchmarkCase(
-        name=name,
-        description=str(baseline.get("description", name.replace("_", " "))),
-        max_seconds=float(baseline["max_seconds"]),
-        runner=runner,
     )
 
 
@@ -156,6 +158,7 @@ def run_benchmark_suite(
 ) -> list[BenchmarkResult]:
     """Execute each benchmark case and return stable summary measurements."""
 
+    global completed
     results: list[BenchmarkResult] = []
     for case in cases:
         for _ in range(max(warmup, 0)):
@@ -172,15 +175,6 @@ def run_benchmark_suite(
         average_seconds = statistics.fmean(measurements)
         results.append(
             BenchmarkResult(
-                name=case.name,
-                description=case.description,
-                max_seconds=case.max_seconds,
-                average_seconds=average_seconds,
-                median_seconds=statistics.median(measurements),
-                min_seconds=min(measurements),
-                max_observed_seconds=max(measurements),
-                iterations_completed=completed,
-                regressed=average_seconds > case.max_seconds,
             )
         )
     return results

@@ -43,44 +43,44 @@ These fields define the screening concept used in discovery, semantic topic matc
 
 - Search terms used to generate source queries.
 - Supported separators:
-  - comma
-  - semicolon
-  - newline
+    - comma
+    - semicolon
+    - newline
 - Example values:
-  - `AI governance, generative AI, decision support`
-  - `AI governance; generative AI; decision support`
+    - `AI governance, generative AI, decision support`
+    - `AI governance; generative AI; decision support`
 
 `boolean_operators`
 
 - Optional Boolean connector or expression used while building search queries.
 - Typical values:
-  - `AND`
-  - `OR`
-  - a short custom expression
+    - `AND`
+    - `OR`
+    - a short custom expression
 
 `inclusion_criteria`
 
 - Positive screening rules.
 - Example:
-  - `empirical evaluation; systematic review; healthcare AI`
+    - `empirical evaluation; systematic review; healthcare AI`
 
 `exclusion_criteria`
 
 - Rules that should exclude papers even if the topic appears similar.
 - Example:
-  - `non-scholarly commentary; marketing material; undergraduate coursework`
+    - `non-scholarly commentary; marketing material; undergraduate coursework`
 
 `banned_topics`
 
 - Hard thematic bans that can drive exclusion.
 - Example:
-  - `agricultural irrigation; crop yield`
+    - `agricultural irrigation; crop yield`
 
 `excluded_title_terms`
 
 - Title markers that should usually be dropped before deeper screening.
 - Example:
-  - `correction; erratum; editorial; retraction`
+    - `correction; erratum; editorial; retraction`
 
 ## Discovery Settings
 
@@ -141,11 +141,11 @@ Manual import and offline sources:
 `discovery_strategy`
 
 - `precise`
-  - fewer query variants, narrower recall
+    - fewer query variants, narrower recall
 - `balanced`
-  - default trade-off between recall and cost
+    - default trade-off between recall and cost
 - `broad`
-  - more query variants and broader recall
+    - more query variants and broader recall
 
 `year_range_start`
 
@@ -220,8 +220,8 @@ These settings are persisted with saved GUI profiles so the desktop workbench op
 
 - Controls the default density of the `Settings` shell.
 - Supported values:
-  - `compact`
-  - `advanced`
+    - `compact`
+    - `advanced`
 - `compact` keeps longer helper sections collapsed by default and fits better on smaller windows
 - `advanced` keeps more section guidance visible for deeper orientation
 
@@ -229,9 +229,9 @@ These settings are persisted with saved GUI profiles so the desktop workbench op
 
 - Controls whether advanced settings pages are visible immediately on startup.
 - `true`
-  - advanced runtime pages open without an extra toggle
+    - advanced runtime pages open without an extra toggle
 - `false`
-  - the workbench starts in the simpler view and reveals advanced pages only when requested
+    - the workbench starts in the simpler view and reveals advanced pages only when requested
 
 Practical GUI behavior:
 
@@ -261,21 +261,21 @@ This is the local CPU-friendly semantic relevance layer.
 
 - Default threshold for `HIGH_RELEVANCE`
 - Default behavior:
-  - `>= 0.75` -> `HIGH_RELEVANCE`
+    - `>= 0.75` -> `HIGH_RELEVANCE`
 
 `topic_prefilter_review_threshold`
 
 - Default threshold for `REVIEW`
 - Default behavior:
-  - `>= 0.55 and < 0.75` -> `REVIEW`
-  - `< 0.55` -> `LOW_RELEVANCE`
+    - `>= 0.55 and < 0.75` -> `REVIEW`
+    - `< 0.55` -> `LOW_RELEVANCE`
 
 `topic_prefilter_text_mode`
 
 - Controls which paper text goes into semantic matching:
-  - `title_only`
-  - `title_abstract`
-  - `title_abstract_full_text`
+    - `title_only`
+    - `title_abstract`
+    - `title_abstract_full_text`
 
 `topic_prefilter_max_chars`
 
@@ -286,7 +286,7 @@ This is the local CPU-friendly semantic relevance layer.
 
 - Local sentence-transformer model identifier.
 - Default:
-  - `sentence-transformers/all-MiniLM-L6-v2`
+    - `sentence-transformers/all-MiniLM-L6-v2`
 
 Outputs stored for explainability include:
 
@@ -308,12 +308,12 @@ Additional weighted-fit controls:
 
 - Optional weighted keywords used by the research-fit layer.
 - Syntax:
-  - `keyword`
-  - `keyword|weight`
-  - `keyword|weight|threshold`
+    - `keyword`
+    - `keyword|weight`
+    - `keyword|weight|threshold`
 - Example:
-  - `systematic review|1.8|70`
-  - `large language models|1.4|60`
+    - `systematic review|1.8|70`
+    - `large language models|1.4|60`
 - If the per-keyword threshold is omitted, the rule falls back to `topic_prefilter_match_threshold`.
 - In the GUI this field is managed through a visual keyword-rule builder popup that edits the same stored syntax.
 
@@ -339,12 +339,12 @@ These settings control the heavier screening and ranking passes.
 
 - Top-level screening provider.
 - Supported values:
-  - `auto`
-  - `heuristic`
-  - `openai_compatible`
-  - `gemini`
-  - `ollama`
-  - `huggingface_local`
+    - `auto`
+    - `heuristic`
+    - `openai_compatible`
+    - `gemini`
+    - `ollama`
+    - `huggingface_local`
 
 `relevance_threshold`
 
@@ -353,9 +353,9 @@ These settings control the heavier screening and ranking passes.
 `decision_mode`
 
 - `strict`
-  - keep or exclude only
+    - keep or exclude only
 - `triage`
-  - allows `maybe`
+    - allows `maybe`
 
 `maybe_threshold_margin`
 
@@ -373,13 +373,13 @@ These settings control the heavier screening and ranking passes.
 
 - Ordered pass chain for multi-model screening.
 - Each pass can define:
-  - name
-  - provider
-  - threshold
-  - decision mode
-  - maybe margin
-  - model override
-  - minimum previous-pass score
+    - name
+    - provider
+    - threshold
+    - decision mode
+    - maybe margin
+    - model override
+    - minimum previous-pass score
 
 ## Provider Settings
 
@@ -588,11 +588,11 @@ Per-source request pacing is also available for:
 Project coverage is intentionally split into two modes:
 
 - production-code coverage
-  - the default configuration omits `tests/*`
-  - this is the enforced release gate
+    - the default configuration omits `tests/*`
+    - this is the enforced release gate
 - whole-tree reference coverage
-  - includes test modules too
-  - useful when you explicitly want every Python file in one report
+    - includes test modules too
+    - useful when you explicitly want every Python file in one report
 
 That is why a plain `python -m coverage report` usually shows production files only unless the run was created with `--include-tests`.
 

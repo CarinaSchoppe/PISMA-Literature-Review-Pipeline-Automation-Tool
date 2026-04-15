@@ -296,7 +296,6 @@ class PipelineIntegrationTests(unittest.TestCase):
             calls: list[tuple[str, bool | None, str]] = []
 
             def fake_fetch(
-                    self: PDFFetcher,
                     paper,
                     *,
                     download: bool | None = None,
@@ -758,7 +757,7 @@ class PipelineIntegrationTests(unittest.TestCase):
                         self.result = result
                         self.calls = 0
 
-                    def screen(self, paper: PaperMetadata) -> ScreeningResult:
+                    def screen(self) -> ScreeningResult:
                         self.calls += 1
                         return self.result
 

@@ -9,33 +9,34 @@ from config import ResearchConfig
 from discovery.springer_client import SpringerClient
 
 
+def _config(**overrides) -> ResearchConfig:
+    payload = {
+        "research_topic": "Large language models",
+        "search_keywords": ["survey", "benchmark"],
+        "pages_to_retrieve": 2,
+        "results_per_page": 2,
+        "springer_enabled": True,
+        "include_pubmed": False,
+        "api_settings": {"springer_api_key": "springer-key"},
+    }
+    payload.update(overrides)
+    return ResearchConfig(
+        **payload,
+    ).finalize()
+
+
 class SpringerClientExtendedTests(unittest.TestCase):
     """Exercise Springer's API-key guardrails, pagination, and parsing branches."""
 
-    def _config(self, **overrides) -> ResearchConfig:
-        payload = {
-            "research_topic": "Large language models",
-            "search_keywords": ["survey", "benchmark"],
-            "pages_to_retrieve": 2,
-            "results_per_page": 2,
-            "springer_enabled": True,
-            "include_pubmed": False,
-            "api_settings": {"springer_api_key": "springer-key"},
-        }
-        payload.update(overrides)
-        return ResearchConfig(
-            **payload,
-        ).finalize()
-
     def test_search_returns_empty_without_api_key(self) -> None:
-        config = self._config(api_settings={"springer_api_key": None})
+        config = _config(api_settings={"springer_api_key": None})
 
         results = SpringerClient(config).search()
 
         self.assertEqual(results, [])
 
     def test_search_filters_years_and_stops_when_page_is_short(self) -> None:
-        config = self._config(year_range_start=2023, year_range_end=2026, discovery_strategy="precise", pages_to_retrieve=1)
+        config = _config(year_range_start=2023, year_range_end=2026, discovery_strategy="precise", pages_to_retrieve=1)
         payload = {
             "records": [
                 {
@@ -72,11 +73,11 @@ class SpringerClientExtendedTests(unittest.TestCase):
         request_json_mock.assert_called_once()
 
     def test_search_breaks_on_empty_pages_and_per_source_limit(self) -> None:
-        empty_config = self._config(discovery_strategy="precise", pages_to_retrieve=2, results_per_page=1)
+        empty_config = _config(discovery_strategy="precise", pages_to_retrieve=2, results_per_page=1)
         with patch("discovery.springer_client.request_json", return_value=None):
             self.assertEqual(SpringerClient(empty_config).search(), [])
 
-        limit_config = self._config(discovery_strategy="precise", pages_to_retrieve=2, results_per_page=1)
+        limit_config = _config(discovery_strategy="precise", pages_to_retrieve=2, results_per_page=1)
         payload = {
             "records": [
                 {
@@ -94,7 +95,7 @@ class SpringerClientExtendedTests(unittest.TestCase):
         self.assertEqual(len(results), limit_config.per_source_limit)
 
     def test_parse_record_handles_creator_variants_and_identifier_fallback(self) -> None:
-        config = self._config()
+        config = _config()
         client = SpringerClient(config)
 
         paper = client._parse_record(

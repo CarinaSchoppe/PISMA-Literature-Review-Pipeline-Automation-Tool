@@ -12,6 +12,17 @@ from config import ResearchConfig
 from models.paper import PaperMetadata
 
 
+def _to_bool(value: Any) -> bool:
+    """Normalize permissive truthy values commonly found in export files."""
+
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    normalized = str(value).strip().lower()
+    return normalized in {"true", "1", "yes", "y"}
+
+
 class ManualImportClient:
     """Load manually exported literature records into the shared paper model."""
 
@@ -54,13 +65,13 @@ class ManualImportClient:
                     citation_count=int(row.get("citation_count", 0) or 0),
                     reference_count=int(row.get("reference_count", 0) or 0),
                     pdf_link=row.get("pdf_link"),
-                    open_access=self._to_bool(row.get("open_access", False)),
+                    open_access=_to_bool(row.get("open_access", False)),
                     raw_payload=dict(row),
                 )
             )
         return papers
 
-    def _load_rows(self) -> list[dict[str, Any]]:
+    def _load_rows(self) -> list[dict[Any, Any] | dict[str, Any] | dict[str, str] | dict[bytes, bytes]] | Any:
         """Load CSV or JSON rows from the configured manual import file."""
 
         if self.path.suffix.lower() == ".json":
@@ -70,13 +81,3 @@ class ManualImportClient:
             raise ValueError("Manual JSON import must be a list of objects")
         dataframe = pd.read_csv(self.path)
         return dataframe.to_dict(orient="records")
-
-    def _to_bool(self, value: Any) -> bool:
-        """Normalize permissive truthy values commonly found in export files."""
-
-        if isinstance(value, bool):
-            return value
-        if value is None:
-            return False
-        normalized = str(value).strip().lower()
-        return normalized in {"true", "1", "yes", "y"}

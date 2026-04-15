@@ -118,9 +118,9 @@ Non-fullscreen usability:
 The GUI supports two density modes:
 
 - `Compact`
-  - reduces explanatory text density
+    - reduces explanatory text density
 - `Advanced`
-  - restores full helper text and advanced controls
+    - restores full helper text and advanced controls
 
 `Show advanced settings` reveals lower-level runtime controls only when needed.
 
@@ -227,13 +227,13 @@ The Research Fit workspace uses those settings to show:
 - per-keyword threshold deltas
 - matched-rule counts against the configured minimum
 - color-coded fit badges:
-  - green for `STRONG_FIT`
-  - amber for `NEAR_FIT`
-  - red for `WEAK_FIT`
+    - green for `STRONG_FIT`
+    - amber for `NEAR_FIT`
+    - red for `WEAK_FIT`
 - per-keyword status logic:
-  - `MATCHED` when the keyword's actual match percentage is at or above its threshold
-  - `NEAR` when the keyword is below threshold by at most 5 points
-  - `MISSED` when the keyword is more than 5 points below threshold
+    - `MATCHED` when the keyword's actual match percentage is at or above its threshold
+    - `NEAR` when the keyword is below threshold by at most 5 points
+    - `MISSED` when the keyword is more than 5 points below threshold
 
 ## Manual Paper Intake
 

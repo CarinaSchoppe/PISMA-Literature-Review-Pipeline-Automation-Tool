@@ -12,22 +12,23 @@ from config import ResearchConfig
 from models.paper import PaperMetadata
 
 
+def _config(root: Path) -> ResearchConfig:
+    return ResearchConfig(
+        research_topic="AI-assisted literature review",
+        search_keywords=["llm", "systematic review"],
+        data_dir=root / "data",
+        papers_dir=root / "papers",
+        results_dir=root / "results",
+        database_path=root / "data" / "manual.db",
+    ).finalize()
+
+
 class ManualPaperIngestorTests(unittest.TestCase):
     """Exercise the manual link/PDF resolver without live network calls."""
 
-    def _config(self, root: Path) -> ResearchConfig:
-        return ResearchConfig(
-            research_topic="AI-assisted literature review",
-            search_keywords=["llm", "systematic review"],
-            data_dir=root / "data",
-            papers_dir=root / "papers",
-            results_dir=root / "results",
-            database_path=root / "data" / "manual.db",
-        ).finalize()
-
     def test_ingest_link_uses_crossref_for_doi_urls(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            config = self._config(Path(temp_dir))
+            config = _config(Path(temp_dir))
             ingestor = ManualPaperIngestor(config)
             payload = {
                 "message": {
@@ -48,7 +49,7 @@ class ManualPaperIngestorTests(unittest.TestCase):
 
     def test_ingest_link_can_build_metadata_from_landing_page(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            config = self._config(Path(temp_dir))
+            config = _config(Path(temp_dir))
             ingestor = ManualPaperIngestor(config)
             html = """
             <html>
@@ -61,7 +62,7 @@ class ManualPaperIngestorTests(unittest.TestCase):
             """
             pdf_paper = PaperMetadata(title="Landing Page Paper", source="manual_link_pdf", pdf_path="papers/manual.pdf")
             with patch("acquisition.manual_paper_ingestor.request_text", return_value=html), patch.object(
-                ingestor, "_download_pdf", return_value=Path(temp_dir) / "paper.pdf"
+                    ingestor, "_download_pdf", return_value=Path(temp_dir) / "paper.pdf"
             ), patch.object(ingestor, "_paper_from_local_pdf", return_value=pdf_paper):
                 paper = ingestor.ingest_link("https://example.org/paper")
 
@@ -71,7 +72,7 @@ class ManualPaperIngestorTests(unittest.TestCase):
     def test_ingest_pdf_uses_excerpt_and_can_enrich_via_doi(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config = self._config(root)
+            config = _config(root)
             pdf_path = root / "sample.pdf"
             pdf_path.write_bytes(b"%PDF-1.4 sample")
             ingestor = ManualPaperIngestor(config)
@@ -85,8 +86,8 @@ class ManualPaperIngestorTests(unittest.TestCase):
             }
             excerpt = "Extracted PDF Paper\nThis paper uses DOI 10.5555/pdf-paper and studies LLM screening."
             with patch.object(ingestor.extractor, "extract_excerpt", return_value=excerpt), patch(
-                "acquisition.manual_paper_ingestor.request_json",
-                return_value=crossref_payload,
+                    "acquisition.manual_paper_ingestor.request_json",
+                    return_value=crossref_payload,
             ):
                 paper = ingestor.ingest_pdf(pdf_path)
 
@@ -96,7 +97,7 @@ class ManualPaperIngestorTests(unittest.TestCase):
 
     def test_ingest_link_rejects_blank_input_and_missing_crossref_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            config = self._config(Path(temp_dir))
+            config = _config(Path(temp_dir))
             ingestor = ManualPaperIngestor(config)
             with self.assertRaisesRegex(ValueError, "paper link is required"):
                 ingestor.ingest_link("   ")
@@ -106,12 +107,12 @@ class ManualPaperIngestorTests(unittest.TestCase):
 
     def test_ingest_link_handles_arxiv_and_missing_arxiv_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            config = self._config(Path(temp_dir))
+            config = _config(Path(temp_dir))
             ingestor = ManualPaperIngestor(config)
             arxiv_paper = PaperMetadata(title="Arxiv Paper", source="arxiv")
             with patch("acquisition.manual_paper_ingestor.request_text", return_value="<feed/>"), patch(
-                "discovery.arxiv_client.ArxivClient._parse_feed",
-                return_value=[arxiv_paper],
+                    "discovery.arxiv_client.ArxivClient._parse_feed",
+                    return_value=[arxiv_paper],
             ):
                 paper = ingestor.ingest_link("https://arxiv.org/abs/2501.12345")
             self.assertEqual(paper.title, "Arxiv Paper")
@@ -121,8 +122,8 @@ class ManualPaperIngestorTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "No arXiv metadata"):
                     ingestor.ingest_link("arxiv:2501.12345")
             with patch("acquisition.manual_paper_ingestor.request_text", return_value="<feed/>"), patch(
-                "discovery.arxiv_client.ArxivClient._parse_feed",
-                return_value=[],
+                    "discovery.arxiv_client.ArxivClient._parse_feed",
+                    return_value=[],
             ):
                 with self.assertRaisesRegex(ValueError, "No arXiv metadata"):
                     ingestor.ingest_link("2501.12345")
@@ -130,7 +131,7 @@ class ManualPaperIngestorTests(unittest.TestCase):
     def test_landing_page_and_local_pdf_cover_fallback_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config = self._config(root)
+            config = _config(root)
             ingestor = ManualPaperIngestor(config)
             pdf_path = root / "paper.pdf"
             pdf_path.write_bytes(b"%PDF")
@@ -144,7 +145,7 @@ class ManualPaperIngestorTests(unittest.TestCase):
             </head></html>
             """
             with patch("acquisition.manual_paper_ingestor.request_text", return_value=html), patch.object(
-                ingestor, "_paper_from_doi", side_effect=RuntimeError("boom")
+                    ingestor, "_paper_from_doi", side_effect=RuntimeError("boom")
             ), patch.object(
                 ingestor, "_download_pdf", return_value=pdf_path
             ), patch.object(
@@ -158,30 +159,30 @@ class ManualPaperIngestorTests(unittest.TestCase):
             self.assertEqual(paper.external_ids.get("manual_url"), "https://example.org/paper")
 
             with patch.object(ingestor.extractor, "extract_excerpt", return_value="No doi excerpt"), patch.object(
-                ingestor, "_paper_from_doi", side_effect=AssertionError("should not enrich")
+                    ingestor, "_paper_from_doi", side_effect=AssertionError("should not enrich")
             ):
                 local_paper = ingestor.ingest_pdf(pdf_path)
             self.assertEqual(local_paper.pdf_path, str(pdf_path))
             self.assertEqual(local_paper.source, "manual_local_pdf")
 
             with patch.object(
-                ingestor.extractor,
-                "extract_excerpt",
-                return_value="Interesting title\nDOI 10.2000/testdoi present",
+                    ingestor.extractor,
+                    "extract_excerpt",
+                    return_value="Interesting title\nDOI 10.2000/testdoi present",
             ), patch.object(ingestor, "_paper_from_doi", side_effect=RuntimeError("boom")):
                 enriched_fallback = ingestor.ingest_pdf(pdf_path)
             self.assertEqual(enriched_fallback.doi, "10.2000/testdoi")
 
             with patch("acquisition.manual_paper_ingestor.request_text", return_value=""), self.assertRaisesRegex(
-                ValueError,
-                "No metadata could be downloaded",
+                    ValueError,
+                    "No metadata could be downloaded",
             ):
                 ingestor.ingest_link("https://example.org/empty")
 
             with patch("acquisition.manual_paper_ingestor.request_text", return_value=html), patch.object(
-                ingestor,
-                "_download_pdf",
-                side_effect=RuntimeError("pdf blocked"),
+                    ingestor,
+                    "_download_pdf",
+                    side_effect=RuntimeError("pdf blocked"),
             ):
                 warning_only = ingestor.ingest_link("https://example.org/paper-warning")
             self.assertEqual(warning_only.title, "Landing title")
@@ -189,7 +190,7 @@ class ManualPaperIngestorTests(unittest.TestCase):
     def test_download_and_html_helpers_cover_non_pdf_and_filename_paths(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config = self._config(root)
+            config = _config(root)
             ingestor = ManualPaperIngestor(config)
 
             html = """
@@ -206,20 +207,20 @@ class ManualPaperIngestorTests(unittest.TestCase):
             )
             self.assertIsNone(ingestor._extract_pdf_link("<html></html>", base_url="https://example.org/page"))
             self.assertEqual(
-                ingestor._infer_title(Path("sample_name.pdf"), "Short\nA much longer inferred title line for the paper"),
+                _infer_title(Path("sample_name.pdf"), "Short\nA much longer inferred title line for the paper"),
                 "A much longer inferred title line for the paper",
             )
-            self.assertEqual(ingestor._infer_title(Path("sample_name.pdf"), "tiny"), "sample name")
-            self.assertTrue(ingestor._looks_like_pdf_link("https://example.org/file.pdf"))
-            self.assertFalse(ingestor._looks_like_pdf_link("https://example.org/file"))
-            self.assertEqual(ingestor._clean_html_text("<b>Hello</b> &amp; world"), "Hello & world")
+            self.assertEqual(_infer_title(Path("sample_name.pdf"), "tiny"), "sample name")
+            self.assertTrue(_looks_like_pdf_link("https://example.org/file.pdf"))
+            self.assertFalse(_looks_like_pdf_link("https://example.org/file"))
+            self.assertEqual(_clean_html_text("<b>Hello</b> &amp; world"), "Hello & world")
 
             response = Mock()
             response.headers = {"Content-Type": "application/pdf"}
-            ingestor._ensure_pdf_response(response, "https://example.org/file")
+            _ensure_pdf_response(response, "https://example.org/file")
             response.headers = {"Content-Type": "text/html"}
             with self.assertRaisesRegex(ValueError, "did not return a PDF"):
-                ingestor._ensure_pdf_response(response, "https://example.org/file")
+                _ensure_pdf_response(response, "https://example.org/file")
 
             mock_response = Mock()
             mock_response.headers = {"Content-Type": "application/pdf"}
@@ -235,7 +236,7 @@ class ManualPaperIngestorTests(unittest.TestCase):
     def test_ingest_pdf_raises_for_missing_local_file_and_direct_pdf_url_uses_pdf_branch(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            config = self._config(root)
+            config = _config(root)
             ingestor = ManualPaperIngestor(config)
 
             with self.assertRaisesRegex(FileNotFoundError, "Paper file not found"):
@@ -250,9 +251,9 @@ class ManualPaperIngestorTests(unittest.TestCase):
                 raw_payload={},
             )
             with patch.object(ingestor, "_download_pdf", return_value=local_pdf) as download_pdf, patch.object(
-                ingestor,
-                "_paper_from_local_pdf",
-                return_value=pdf_paper,
+                    ingestor,
+                    "_paper_from_local_pdf",
+                    return_value=pdf_paper,
             ) as paper_from_local_pdf:
                 paper = ingestor.ingest_link("https://example.org/download?id=1&download=true")
 

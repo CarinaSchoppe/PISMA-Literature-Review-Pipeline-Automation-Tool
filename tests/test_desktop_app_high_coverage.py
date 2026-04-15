@@ -15,8 +15,8 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pandas as pd
 
-from ui.desktop_app import DesktopWorkbench, HoverTooltip, UILogHandler, launch_desktop_app
 from tests import test_desktop_app as desktop_app_tests
+from ui.desktop_app import DesktopWorkbench, HoverTooltip, UILogHandler, launch_desktop_app
 
 
 def _walk_widgets(widget: tk.Misc):
@@ -39,8 +39,30 @@ def _find_button(root: tk.Misc, text: str):
     raise AssertionError(f"Button with text {text!r} not found")
 
 
+def request_stop():
+    return None
+
+
+def select(tab_id=None):
+    return tab_id or ""
+
+
+def tabs():
+    return []
+
+
+def tab(_tab_id, option=None, **_kwargs):
+    if option == "text":
+        return None
+    return None
+
+
 class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
     """Cover UI guard clauses and small callback branches not exercised by the core workflow tests."""
+
+    def __init__(self, methodName: str = "runTest"):
+        super().__init__(methodName)
+        self.workbench = None
 
     def setUp(self) -> None:
         try:
@@ -133,7 +155,7 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
         self.workbench.settings_page_description_label = Mock()
         self.workbench.settings_mode_var.set("advanced")
         with patch.object(self.workbench.root, "winfo_width", return_value=1600), patch.object(
-            self.workbench.root, "winfo_height", return_value=980
+                self.workbench.root, "winfo_height", return_value=980
         ), patch.object(self.workbench, "_schedule_settings_pane_positions") as schedule_panes:
             self.workbench._apply_responsive_layout()
         self.assertFalse(self.workbench.compact_window_mode.get())
@@ -326,7 +348,7 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
             fake_document.__getitem__.return_value = fake_page
 
             with patch.object(self.workbench.document_canvas, "create_image", return_value=1), patch(
-                "ui.desktop_app.PDF_RENDERING_AVAILABLE", True
+                    "ui.desktop_app.PDF_RENDERING_AVAILABLE", True
             ), patch(
                 "ui.desktop_app.pdfium", SimpleNamespace(PdfDocument=Mock(return_value=fake_document))
             ), patch("ui.desktop_app.ImageTk", SimpleNamespace(PhotoImage=Mock(return_value="photo"))):
@@ -435,22 +457,14 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
         self.assertTrue(self.workbench.show_advanced_settings.get())
 
         class FakeNotebook:
-            def tab(self, _tab_id, option=None, **_kwargs):
-                if option == "text":
-                    return None
-                return None
-
-            def tabs(self):
-                return []
-
-            def select(self, tab_id=None):
-                return tab_id or ""
+            def __init__(self):
+                pass
 
         original_notebook = self.workbench.settings_pages_notebook
         fake_notebook = FakeNotebook()
-        self.assertIsNone(fake_notebook.tab("x", "text"))
-        self.assertIsNone(fake_notebook.tab("x", "other"))
-        self.assertEqual(fake_notebook.tabs(), [])
+        self.assertIsNone(tab("x", "text"))
+        self.assertIsNone(tab("x", "other"))
+        self.assertEqual(tabs(), [])
         self.workbench.settings_pages_notebook = fake_notebook
         self.workbench._handle_settings_page_changed()
         self.workbench.settings_pages_notebook = original_notebook
@@ -481,7 +495,7 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
     def test_entry_guidance_placeholder_validation_and_start_run_branches(self) -> None:
         field_name = "temporary_entry_field_unique_branch"
         for index, (original_guidance, original_placeholder) in enumerate(
-            ((None, None), ("original guidance", "original placeholder"))
+                ((None, None), ("original guidance", "original placeholder"))
         ):
             if original_guidance is not None:
                 self.workbench.FIELD_INPUT_GUIDANCE[field_name] = original_guidance
@@ -977,7 +991,7 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
         self.workbench._load_profile()
 
         class FakeThread:
-            def __init__(self, target=None, daemon=None):  # noqa: ANN001
+            def __init__(self, target=None):  # noqa: ANN001
                 self._target = target
                 self._alive = False
 
@@ -998,11 +1012,8 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
             def run(self):
                 raise RuntimeError("worker boom")
 
-            def request_stop(self):
-                return None
-
         with patch("ui.desktop_app.PipelineController", BrokenController), patch(
-            "ui.desktop_app.threading.Thread", FakeThread
+                "ui.desktop_app.threading.Thread", FakeThread
         ), patch(
             "ui.desktop_app.form_values_to_config",
             return_value=SimpleNamespace(
@@ -1019,8 +1030,8 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
             self.workbench._poll_messages()
         showerror.assert_called_once()
         self.assertTrue(self.workbench.status_var.get().startswith("Run failed:"))
-        controller = BrokenController(SimpleNamespace(), None)
-        self.assertIsNone(controller.request_stop())
+        BrokenController(SimpleNamespace(), None)
+        self.assertIsNone(request_stop())
 
         self.workbench._emit_worker_event({"event_type": "custom"})
         self.assertEqual(self.workbench.message_queue.get_nowait()[0], "event")
@@ -1037,7 +1048,7 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
 
         self.workbench.current_result = {"papers_snapshot": [{"title": "Snapshot paper"}]}
         with patch("ui.desktop_app.form_values_to_config", return_value=SimpleNamespace(results_dir=Path("results/mock"))), patch.object(
-            self.workbench, "_load_dataframe_into_tree"
+                self.workbench, "_load_dataframe_into_tree"
         ) as load_tree, patch.object(self.workbench, "_load_records_into_tree") as load_records:
             self.workbench._refresh_all_table()
         load_tree.assert_not_called()
@@ -1069,7 +1080,7 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
         controller = Mock()
         self.workbench.current_controller = controller
         with patch.object(self.workbench, "_set_status") as set_status, patch("ui.desktop_app.PipelineController", BrokenController), patch(
-            "ui.desktop_app.threading.Thread", FakeThread
+                "ui.desktop_app.threading.Thread", FakeThread
         ), patch.object(
             self.workbench, "_validate_guided_text_inputs", return_value=[]
         ), patch(
@@ -1096,11 +1107,11 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
         with patch.object(self.workbench.root_logger, "removeHandler") as remove_handler, patch.object(
                 self.workbench.root, "withdraw"
         ) as withdraw, patch.object(
-                self.workbench.root, "update_idletasks"
+            self.workbench.root, "update_idletasks"
         ) as update_idletasks, patch.object(
-                self.workbench.root, "quit"
+            self.workbench.root, "quit"
         ) as quit_mock, patch.object(
-                self.workbench.root, "destroy"
+            self.workbench.root, "destroy"
         ) as destroy, patch.object(
             self.workbench.root,
             "unbind_all",
@@ -1119,11 +1130,11 @@ class DesktopWorkbenchHighCoverageTests(unittest.TestCase):
         with patch.object(self.workbench.root_logger, "removeHandler"), patch.object(
                 self.workbench.root, "withdraw", side_effect=tk.TclError("broken withdraw")
         ) as withdraw_error, patch.object(
-                self.workbench.root, "update_idletasks"
+            self.workbench.root, "update_idletasks"
         ) as update_idletasks_error, patch.object(
-                self.workbench.root, "quit"
+            self.workbench.root, "quit"
         ) as quit_error, patch.object(
-                self.workbench.root, "destroy"
+            self.workbench.root, "destroy"
         ) as destroy_error, patch.object(
             self.workbench.root,
             "unbind_all",

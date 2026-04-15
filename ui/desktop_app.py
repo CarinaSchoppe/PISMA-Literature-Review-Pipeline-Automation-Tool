@@ -18,6 +18,7 @@ from tkinter import filedialog, messagebox, scrolledtext, simpledialog, ttk
 from typing import Any, Callable
 
 import pandas as pd
+
 try:
     from PIL import ImageTk
 except ImportError:  # pragma: no cover - optional runtime dependency
@@ -61,10 +62,10 @@ class WorkbenchRoot(tk.Tk):
         self.callback_exception_handler: Callable[[type[BaseException], BaseException, Any], None] | None = None
 
     def report_callback_exception(
-        self,
-        exc: type[BaseException],
-        val: BaseException,
-        tb: Any,
+            self,
+            exc: type[BaseException],
+            val: BaseException,
+            tb: Any,
     ) -> None:
         """Use the configured handler when available instead of Tk's default stderr printer."""
 
@@ -83,6 +84,15 @@ class UILogHandler(logging.Handler):
 
     def emit(self, record: logging.LogRecord) -> None:
         self.message_queue.put(("log", self.format(record)))
+
+
+def _coerce_coordinate(value: Any, fallback: int) -> int:
+    """Convert Tk event coordinates into integers, tolerating FocusIn placeholders like '??'."""
+
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return int(fallback)
 
 
 class HoverTooltip:
@@ -112,8 +122,8 @@ class HoverTooltip:
             self.label.pack(fill="both", expand=True)
         if self.label is not None:
             self.label.configure(text=message)
-        x_pos = self._coerce_coordinate(x, self.root.winfo_pointerx())
-        y_pos = self._coerce_coordinate(y, self.root.winfo_pointery())
+        x_pos = _coerce_coordinate(x, self.root.winfo_pointerx())
+        y_pos = _coerce_coordinate(y, self.root.winfo_pointery())
         self.window.geometry(f"+{x_pos + 16}+{y_pos + 16}")
         self.window.deiconify()
 
@@ -123,13 +133,535 @@ class HoverTooltip:
         if self.window is not None:
             self.window.withdraw()
 
-    def _coerce_coordinate(self, value: Any, fallback: int) -> int:
-        """Convert Tk event coordinates into integers, tolerating FocusIn placeholders like '??'."""
 
+def _open_path(path: Path) -> None:
+    """Open a file or directory using the host operating system defaults."""
+
+    if not path.exists():
+        messagebox.showerror("Path not found", f"{path} does not exist.")
+        return
+    if os.name == "nt":
+        os.startfile(path)  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        subprocess.run(["open", str(path)], check=False)
+    else:
+        subprocess.run(["xdg-open", str(path)], check=False)
+
+
+def _paper_from_row(row: dict[str, Any]) -> PaperMetadata | None:
+    """Convert a row payload into `PaperMetadata` for richer research-fit scoring."""
+
+    title = str(row.get("title", "") or "").strip()
+    if not title:
+        return None
+    raw_payload = row.get("raw_payload")
+    if isinstance(raw_payload, str):
         try:
-            return int(value)
-        except (TypeError, ValueError):
-            return int(fallback)
+            raw_payload = json.loads(raw_payload)
+        except json.JSONDecodeError:
+            raw_payload = {"raw_payload": raw_payload}
+    elif not isinstance(raw_payload, dict):
+        raw_payload = {}
+    for key in ("extracted_passage", "relevance_explanation", "abstract", "full_text_excerpt"):
+        value = row.get(key)
+        if value:
+            raw_payload.setdefault(key, value)
+    year_value = row.get("year")
+    parsed_year: int | None = None
+    if year_value not in (None, ""):
+        try:
+            parsed_year = int(str(year_value).strip())
+        except ValueError:
+            parsed_year = None
+    return PaperMetadata(
+        title=title,
+        abstract=str(row.get("abstract", "") or ""),
+        authors=str(row.get("authors", "") or ""),
+        year=parsed_year,
+        source=str(row.get("source", "") or ""),
+        doi=str(row.get("doi", "") or ""),
+        url=str(row.get("url", "") or row.get("landing_page_url", "") or ""),
+        venue=str(row.get("venue", "") or ""),
+        raw_payload=raw_payload,
+    )
+
+
+def _candidate_document_path(row: dict[str, Any]) -> Path | None:
+    """Return the best local file path referenced by a row, if one exists."""
+
+    candidates = (
+        row.get("pdf_path"),
+        row.get("local_pdf_path"),
+        row.get("downloaded_pdf_path"),
+        row.get("document_path"),
+    )
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(str(candidate))
+        if path.exists():
+            return path
+    return None
+
+
+def _summarize_artifact_path(label: str, path: Path) -> str:
+    """Build a human-readable summary for one output artifact or directory."""
+
+    lines = [f"Artifact key: {label}", f"Resolved path: {path}"]
+    if path.exists():
+        if path.is_dir():
+            child_count = len(list(path.iterdir()))
+            lines.append("Artifact type: directory")
+            lines.append(f"Contains: {child_count} direct children")
+        elif path.suffix.lower() == ".csv":
+            try:
+                dataframe = pd.read_csv(path)
+                lines.append("Artifact type: CSV artifact")
+                lines.append(f"Rows: {len(dataframe)}")
+                lines.append(f"Columns: {', '.join(dataframe.columns[:8]) or '(none)'}")
+            except Exception:  # noqa: BLE001
+                lines.append("Artifact type: CSV artifact")
+                lines.append("Summary: could not parse the CSV preview.")
+        elif path.suffix.lower() == ".json":
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                lines.append("Artifact type: JSON artifact")
+                if isinstance(payload, dict):
+                    lines.append(f"Top-level keys: {', '.join(list(payload.keys())[:8]) or '(none)'}")
+                elif isinstance(payload, list):
+                    lines.append(f"Top-level items: {len(payload)}")
+            except Exception:  # noqa: BLE001
+                lines.append("Artifact type: JSON artifact")
+                lines.append("Summary: could not parse the JSON preview.")
+        elif path.suffix.lower() == ".md":
+            try:
+                lines.append("Artifact type: Markdown artifact")
+                lines.append(f"Approximate lines: {len(path.read_text(encoding='utf-8').splitlines())}")
+            except OSError:
+                lines.append("Artifact type: Markdown artifact")
+                lines.append("Summary: could not read the Markdown preview.")
+        elif path.suffix.lower() == ".db":
+            lines.append("Artifact type: SQLite database")
+            lines.append(f"File size: {path.stat().st_size} bytes")
+        else:
+            lines.append(f"Artifact type: {path.suffix.lower() or 'file'}")
+            lines.append(f"File size: {path.stat().st_size} bytes")
+    else:
+        lines.append("Artifact status: path does not exist yet. It may be planned for the next run.")
+    return "\n".join(lines)
+
+
+def _artifact_tag_for_path(path: Path) -> str:
+    """Return the semantic Treeview tag used for one artifact path."""
+
+    if path.is_dir() or path.suffix == "":
+        return "artifact_folder"
+    return {
+        ".csv": "artifact_csv",
+        ".json": "artifact_json",
+        ".md": "artifact_markdown",
+        ".db": "artifact_sqlite",
+        ".pdf": "artifact_pdf",
+    }.get(path.suffix.lower(), "artifact_file")
+
+
+def _artifact_badge_for_path(path: Path) -> str:
+    """Return a compact badge label for one artifact path."""
+
+    if path.is_dir() or path.suffix == "":
+        return "[DIR]"
+    return {
+        ".csv": "[CSV]",
+        ".json": "[JSON]",
+        ".md": "[MD]",
+        ".db": "[DB]",
+        ".pdf": "[PDF]",
+        ".txt": "[TXT]",
+    }.get(path.suffix.lower(), "[FILE]")
+
+
+def _regenerate_manual_outputs(config: Any, papers: list[PaperMetadata]) -> dict[str, str]:
+    """Regenerate the standard report artifacts after a manual paper edit."""
+
+    report_generator = ReportGenerator(config, AIScreener(config))
+    database = DatabaseManager(config.database_path)
+    stats = {
+        "discovered_count": len(papers),
+        "deduplicated_count": len(papers),
+        "screened_count": len([paper for paper in papers if paper.inclusion_decision]),
+        "decision_counts": database.get_decision_counts(config.query_key),
+    }
+    try:
+        return report_generator.generate(papers, stats=stats)
+    finally:
+        database.close()
+
+
+def _persist_manual_paper(
+        config: Any,
+        database: DatabaseManager,
+        paper: PaperMetadata,
+) -> PaperMetadata:
+    """Store one manual paper and run the current screening stack against it."""
+
+    screener = AIScreener(config)
+    stored = database.upsert_papers([paper], config.query_key)
+    stored_paper = stored[0]
+    if stored_paper.pdf_path:
+        excerpt = FullTextExtractor(max_chars=config.full_text_max_chars).extract_excerpt(stored_paper.pdf_path)
+        if excerpt:
+            stored_paper = stored_paper.model_copy(
+                update={
+                    "raw_payload": {**stored_paper.raw_payload, "full_text_excerpt": excerpt},
+                    "abstract": stored_paper.abstract or excerpt[:1600],
+                }
+            )
+            stored_paper = database.upsert_papers([stored_paper], config.query_key)[0]
+    result = screener.screen(stored_paper).model_copy(update={"screening_context_key": config.screening_context_key})
+    screening_details = result.model_dump(mode="json")
+    database.update_screening_result(stored_paper.database_id or 0, result, screening_details)
+    refreshed = database.get_papers_for_query(config.query_key)
+    for candidate in refreshed:
+        if candidate.database_id == stored_paper.database_id:
+            return candidate
+    return stored_paper
+
+
+def _get_widget_content(widget: tk.Widget, mode: str) -> str:
+    """Read text from a placeholder-aware widget."""
+
+    if mode == "text":
+        return widget.get("1.0", tk.END).strip()  # type: ignore[call-arg]
+    if isinstance(widget, ttk.Entry):
+        return widget.get().strip()
+    return ""
+
+
+def _set_text_widget_value(widget: tk.Text, text: str) -> None:
+    """Write text into a Tk text widget, temporarily unlocking read-only widgets when needed."""
+
+    previous_state = str(widget.cget("state"))
+    if previous_state == "disabled":
+        widget.configure(state="normal")
+    widget.delete("1.0", tk.END)
+    widget.insert("1.0", text)
+    if previous_state == "disabled":
+        widget.configure(state="disabled")
+
+
+def _initialize_table_pane_position(pane: ttk.Panedwindow, top_panel: ttk.Frame) -> None:
+    """Set a readable default split for vertically resizable table tabs."""
+
+    try:
+        if not pane.winfo_exists():
+            return
+        pane.update_idletasks()
+        preferred_height = max(int(top_panel.winfo_reqheight() or 0) + 18, 120)
+        total_height = int(pane.winfo_height() or 0)
+        if total_height <= 0:
+            return
+        pane.sashpos(0, min(preferred_height, max(total_height - 180, 120)))
+    except tk.TclError:
+        return
+
+
+def _validate_pass_builder_name(name: str, parent: tk.Misc) -> bool:
+    """Return ``True`` when a pass builder row has a valid name, else show an error."""
+
+    if name.strip():
+        return True
+    messagebox.showerror("Pass name required", "Enter a pass name before saving.", parent=parent)
+    return False
+
+
+def _configure_status_tree_tags(tree_widget: ttk.Treeview) -> None:
+    """Define reusable status and decision color tags for result-oriented tables."""
+
+    tag_styles = {
+        "include": {"background": "#eafaf1", "foreground": "#0f8a4a"},
+        "maybe": {"background": "#fff5e8", "foreground": "#b56a00"},
+        "exclude": {"background": "#fff0ef", "foreground": "#c24136"},
+        "completed": {"background": "#eafaf1", "foreground": "#0f8a4a"},
+        "stopped": {"background": "#fff5e8", "foreground": "#b56a00"},
+        "failed": {"background": "#fff0ef", "foreground": "#c24136"},
+        "warning": {"background": "#fff5e8", "foreground": "#b56a00"},
+        "ready": {"background": "#eafaf1", "foreground": "#0f8a4a"},
+        "attention": {"background": "#fff5e8", "foreground": "#b56a00"},
+        "strong_fit": {"background": "#eafaf1", "foreground": "#0f8a4a"},
+        "near_fit": {"background": "#fff5e8", "foreground": "#b56a00"},
+        "weak_fit": {"background": "#fff0ef", "foreground": "#c24136"},
+        "muted": {"background": "#f3f5f8", "foreground": "#667085"},
+        "artifact_csv": {"background": "#eef8ff", "foreground": "#175cd3"},
+        "artifact_json": {"background": "#eef4ff", "foreground": "#3538cd"},
+        "artifact_markdown": {"background": "#f5f3ff", "foreground": "#6938ef"},
+        "artifact_sqlite": {"background": "#eefbf3", "foreground": "#067647"},
+        "artifact_pdf": {"background": "#fff1f3", "foreground": "#c01048"},
+        "artifact_folder": {"background": "#fff7ed", "foreground": "#c2410c"},
+        "artifact_file": {"background": "#f8fafc", "foreground": "#475467"},
+    }
+    for tag_name, style in tag_styles.items():
+        tree_widget.tag_configure(tag_name, **style)
+
+
+def _write_summary_widget(widget: tk.Text | None, text: str) -> None:
+    """Render summary text into a read-only scrolled text widget."""
+
+    if widget is None:
+        return
+    widget.configure(state="normal")
+    widget.delete("1.0", tk.END)
+    widget.insert("1.0", text)
+    widget.configure(state="disabled")
+
+
+def _build_export_preview_text(values: dict[str, Any]) -> str:
+    """Describe the artifact set that the current settings would produce if the run started now."""
+
+    results_dir = Path(str(values.get("results_dir", "results") or "results"))
+    papers_dir = Path(str(values.get("papers_dir", "papers") or "papers"))
+    relevant_dir_raw = str(values.get("relevant_pdfs_dir", "") or "").strip()
+    relevant_dir = Path(relevant_dir_raw) if relevant_dir_raw else papers_dir / "relevant"
+    planned_artifacts = [
+        ("papers.csv", values.get("output_csv"), results_dir / "papers.csv", "Merged and screened paper table."),
+        ("included_papers.csv", values.get("output_csv"), results_dir / "included_papers.csv", "Accepted shortlist with reasons."),
+        ("excluded_papers.csv", values.get("output_csv"), results_dir / "excluded_papers.csv", "Excluded records with reasons."),
+        ("top_papers.json", values.get("output_json"), results_dir / "top_papers.json", "Structured ranking and shortlist JSON."),
+        ("review_summary.md", values.get("output_markdown"), results_dir / "review_summary.md", "Narrative review summary."),
+        ("included_papers.db", values.get("output_sqlite_exports"), results_dir / "included_papers.db", "Included-paper SQLite export."),
+        ("excluded_papers.db", values.get("output_sqlite_exports"), results_dir / "excluded_papers.db", "Excluded-paper SQLite export."),
+        ("prisma_flow.json", values.get("output_json"), results_dir / "prisma_flow.json", "Machine-readable PRISMA flow summary."),
+        ("citation_graph.json", values.get("output_json"), results_dir / "citation_graph.json", "Citation graph export when available."),
+        ("pipeline.log", True, Path(str(values.get("log_file_path", "") or results_dir / "pipeline.log")), "Persistent structured run log."),
+    ]
+    lines = [
+        "This preview is generated from the live UI settings before the run starts.",
+        f"Discovery stage: {'On' if values.get('discovery_stage_enabled') else 'Off'}",
+        f"AI evaluation: {'On' if values.get('ai_evaluation_enabled') else 'Off'}",
+        f"Run mode: {values.get('run_mode')}",
+        f"Results directory: {results_dir}",
+        "",
+        "Planned artifacts:",
+    ]
+    for label, enabled, target, description in planned_artifacts:
+        state = "enabled" if enabled else "disabled"
+        lines.append(f"- {label}: {state} -> {target}")
+        lines.append(f"  {description}")
+    lines.append("")
+    if values.get("download_pdfs"):
+        lines.append(f"Paper PDFs: enabled -> {papers_dir}")
+        if str(values.get("pdf_download_mode", "all")) == "relevant_only":
+            lines.append(f"Relevant-only PDF folder: {relevant_dir}")
+        else:
+            lines.append("All available PDFs stay in the main paper PDF folder.")
+    else:
+        lines.append("Paper PDFs: disabled")
+    return "\n".join(lines)
+
+
+def _guide_shortcuts() -> dict[str, str]:
+    """Return the handbook guide shortcuts shown in the inspector."""
+
+    return {
+        "Model guide": "guide:models",
+        "Output guide": "guide:outputs",
+        "API guide": "guide:api_keys",
+        "Runtime guide": "guide:runtime_tuning",
+        "Actions guide": "guide:actions",
+    }
+
+
+def _quick_destinations() -> dict[str, tuple[str, str | None]]:
+    """Return compact quick-destination choices for the settings inspector."""
+
+    return {
+        "Model provider and pass chain": ("llm_provider", None),
+        "Threshold sliders": ("relevance_threshold", None),
+        "Output toggles": ("output_csv", None),
+        "Storage paths": ("database_path", None),
+        "API keys and endpoints": ("openai_api_key", None),
+        "Runtime tuning": ("max_workers", None),
+        "Verbose logging": ("verbosity", None),
+        "Pass chain editor": ("analysis_passes", "pass_builder"),
+    }
+
+
+def _row_value(row: dict[str, Any], key: str) -> Any:
+    """Read a value from either the flat row payload or nested screening details."""
+
+    value = row.get(key)
+    if value not in {None, ""}:
+        return value
+    screening_details = row.get("screening_details")
+    if isinstance(screening_details, dict):
+        return screening_details.get(key)
+    return value
+
+
+def _coerce_json_list(value: Any) -> list[Any]:
+    """Normalize list-like row values that may arrive as JSON strings."""
+
+    if isinstance(value, list):
+        return value
+    if isinstance(value, str):
+        candidate = value.strip()
+        if not candidate:
+            return []
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            return [item.strip() for item in candidate.split(";") if item.strip()]
+        return parsed if isinstance(parsed, list) else []
+    return []
+
+
+def _research_fit_badge_text(fit_label: str) -> tuple[str, str]:
+    """Return a visible badge string and tone for one research-fit label."""
+
+    normalized = fit_label.strip().upper()
+    if normalized == "STRONG_FIT":
+        return "[FIT] Strong fit", "success"
+    if normalized == "NEAR_FIT":
+        return "[FIT] Near fit", "warning"
+    if normalized == "WEAK_FIT":
+        return "[FIT] Weak fit", "danger"
+    if normalized:
+        return f"[FIT] {fit_label}", "neutral"
+    return "[FIT] Not scored", "muted"
+
+
+def _decision_badge_text(decision: str) -> tuple[str, str]:
+    """Return a visible badge string and semantic tone for one screening decision."""
+
+    normalized = decision.strip().lower()
+    if normalized == "include":
+        return "[INC] Include", "success"
+    if normalized == "maybe":
+        return "[MAY] Maybe", "warning"
+    if normalized == "exclude":
+        return "[EXC] Exclude", "danger"
+    if normalized:
+        return f"[{normalized[:3].upper()}] {decision}", "neutral"
+    return "[REV] Not screened", "muted"
+
+
+def _default_settings_pane_widths(compact_mode: bool) -> tuple[int, int]:
+    """Return the default sidebar widths for the current layout density."""
+
+    return (210, 300) if compact_mode else (240, 340)
+
+
+def _set_collapsible_section_visibility(
+        content: ttk.Frame | None,
+        button: ttk.Button | None,
+        *,
+        visible: bool,
+        expanded_text: str,
+        collapsed_text: str,
+) -> None:
+    """Show or hide one collapsible section and keep its button label in sync."""
+
+    if button is not None:
+        button.configure(text=expanded_text if visible else collapsed_text)
+    if content is None:
+        return
+    if visible:
+        content.grid()
+    else:
+        content.grid_remove()
+
+
+def _artifact_entries_from_result(result: dict[str, Any]) -> list[dict[str, str]]:
+    """Extract likely filesystem artifacts from a pipeline result payload."""
+
+    entries: list[dict[str, str]] = []
+    allowed_suffixes = {".csv", ".json", ".md", ".db", ".txt", ".pdf"}
+    for label, raw_value in sorted(result.items()):
+        if not isinstance(raw_value, str):
+            continue
+        candidate = raw_value.strip()
+        if not candidate:
+            continue
+        path = Path(candidate)
+        label_lower = label.lower()
+        if path.suffix.lower() not in allowed_suffixes and not (
+                label_lower.endswith(("_dir", "_path")) or "dir" in label_lower or "path" in label_lower
+        ):
+            continue
+        entries.append(
+            {
+                "label": label,
+                "display_label": f"{_artifact_badge_for_path(path)} {label}",
+                "path": str(path),
+                "tag": _artifact_tag_for_path(path),
+                "summary": _summarize_artifact_path(label, path),
+            }
+        )
+    return entries
+
+
+def _set_widget_content(widget: tk.Widget, mode: str, text: str) -> None:
+    """Write text into either an entry-like widget or a Tk text widget."""
+
+    if mode == "text":
+        _set_text_widget_value(widget, text)  # type: ignore[arg-type]
+        return
+    if isinstance(widget, ttk.Entry):
+        widget.delete(0, tk.END)
+        widget.insert(0, text)
+
+
+def _format_research_fit_match_summary(row: dict[str, Any]) -> str:
+    """Return the matched-rule summary shown in the Research Fit table."""
+
+    matched = _row_value(row, "topic_prefilter_matched_keyword_count")
+    total = _row_value(row, "topic_prefilter_keyword_rule_count")
+    try:
+        matched_value = int(float(matched or 0))
+    except (TypeError, ValueError):
+        matched_value = 0
+    try:
+        total_value = int(float(total or 0))
+    except (TypeError, ValueError):
+        total_value = 0
+    return f"{matched_value} / {total_value}"
+
+
+def _display_table_value(column: str, row_payload: dict[str, Any]) -> str:
+    """Return a user-facing table value with compact badges for high-signal columns."""
+
+    value = str(row_payload.get(column, "") or "")
+    if not value and isinstance(row_payload.get("screening_details"), dict):
+        value = str(row_payload["screening_details"].get(column, "") or "")
+    if column == "inclusion_decision":
+        badge_text, _tone = _decision_badge_text(value)
+        return badge_text
+    if column == "topic_prefilter_research_fit_label":
+        badge_text, _tone = _research_fit_badge_text(value)
+        return badge_text
+    if column == "relevance_score" and value.strip():
+        return f"[SCORE] {value}"
+    if column == "topic_prefilter_weighted_score" and value.strip():
+        return f"[FIT] {value}"
+    if column == "source" and value.strip():
+        return f"[SRC] {value}"
+    return value[:500]
+
+
+def _topic_detail_payload(row: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
+    """Extract research-fit topics and per-keyword evidence from a row payload."""
+
+    screening_details = row.get("screening_details")
+    extracted_topics = row.get("topic_prefilter_extracted_topics")
+    keyword_details = row.get("topic_prefilter_keyword_details")
+    if isinstance(screening_details, dict):
+        extracted_topics = screening_details.get("topic_prefilter_extracted_topics", extracted_topics)
+        keyword_details = screening_details.get("topic_prefilter_keyword_details", keyword_details)
+    normalized_details: list[dict[str, Any]] = []
+    for entry in _coerce_json_list(keyword_details):
+        if isinstance(entry, dict):
+            normalized_details.append(entry)
+    normalized_topics = [str(topic).strip() for topic in _coerce_json_list(extracted_topics) if str(topic).strip()]
+    return normalized_topics, normalized_details
 
 
 class DesktopWorkbench:
@@ -338,15 +870,15 @@ class DesktopWorkbench:
             ],
         ),
         (
-        "Discovery",
-        [
-            "discovery_stage_enabled",
-            "boolean_operators",
-            "discovery_strategy",
-            "pages_to_retrieve",
-            "results_per_page",
-            "google_scholar_pages",
-            "google_scholar_results_per_page",
+            "Discovery",
+            [
+                "discovery_stage_enabled",
+                "boolean_operators",
+                "discovery_strategy",
+                "pages_to_retrieve",
+                "results_per_page",
+                "google_scholar_pages",
+                "google_scholar_results_per_page",
                 "max_discovered_records",
                 "min_discovered_records",
                 "year_range_start",
@@ -2058,11 +2590,11 @@ class DesktopWorkbench:
         return preferred_theme
 
     def _build_metric_strip(
-        self,
-        parent: ttk.Frame,
-        cards: list[tuple[str, str, str, str, str]],
-        *,
-        card_padding: tuple[int, int] = (14, 12),
+            self,
+            parent: ttk.Frame,
+            cards: list[tuple[str, str, str, str, str]],
+            *,
+            card_padding: tuple[int, int] = (14, 12),
     ) -> ttk.Frame:
         """Render a row of compact summary cards to give dense pages more visual hierarchy."""
 
@@ -2309,31 +2841,11 @@ class DesktopWorkbench:
         )
         self._set_status(mode_message)
 
-    def _set_collapsible_section_visibility(
-        self,
-        content: ttk.Frame | None,
-        button: ttk.Button | None,
-        *,
-        visible: bool,
-        expanded_text: str,
-        collapsed_text: str,
-    ) -> None:
-        """Show or hide one collapsible section and keep its button label in sync."""
-
-        if button is not None:
-            button.configure(text=expanded_text if visible else collapsed_text)
-        if content is None:
-            return
-        if visible:
-            content.grid()
-        else:
-            content.grid_remove()
-
     def _apply_workspace_overview_visibility(self, visible: bool) -> None:
         """Show or collapse the large workspace overview at the top of the app."""
 
         self.workspace_overview_visible = visible
-        self._set_collapsible_section_visibility(
+        _set_collapsible_section_visibility(
             self.workspace_overview_content,
             self.workspace_overview_toggle_button,
             visible=visible,
@@ -2345,7 +2857,7 @@ class DesktopWorkbench:
         """Show or collapse the large settings overview in the settings tab."""
 
         self.settings_overview_visible = visible
-        self._set_collapsible_section_visibility(
+        _set_collapsible_section_visibility(
             self.settings_overview_content,
             self.settings_overview_toggle_button,
             visible=visible,
@@ -2375,9 +2887,9 @@ class DesktopWorkbench:
             return
         current_mode = bool(self.compact_window_mode.get())
         if (
-            self.settings_panes_initialized
-            and self.settings_panes_user_resized
-            and self.settings_panes_mode == current_mode
+                self.settings_panes_initialized
+                and self.settings_panes_user_resized
+                and self.settings_panes_mode == current_mode
         ):
             return
         try:
@@ -2385,7 +2897,7 @@ class DesktopWorkbench:
                 return
             self.settings_panedwindow.update_idletasks()
             width = max(int(self.settings_panedwindow.winfo_width() or 0), 920)
-            left_width, right_width = self._default_settings_pane_widths(current_mode)
+            left_width, right_width = _default_settings_pane_widths(current_mode)
             self._apply_settings_pane_widths(left_width, right_width, total_width=width)
             self.settings_panes_initialized = True
             self.settings_panes_mode = current_mode
@@ -2399,11 +2911,6 @@ class DesktopWorkbench:
         self.settings_panes_initialized = True
         self.settings_panes_mode = bool(self.compact_window_mode.get())
         self._capture_settings_pane_widths()
-
-    def _default_settings_pane_widths(self, compact_mode: bool) -> tuple[int, int]:
-        """Return the default sidebar widths for the current layout density."""
-
-        return (210, 300) if compact_mode else (240, 340)
 
     def _capture_settings_pane_widths(self) -> None:
         """Persist the current left and right sidebar widths after manual resize actions."""
@@ -2452,7 +2959,7 @@ class DesktopWorkbench:
         """Grow or shrink the requested settings sidebar without relying on sash dragging alone."""
 
         current_mode = bool(self.compact_window_mode.get())
-        default_left, default_right = self._default_settings_pane_widths(current_mode)
+        default_left, default_right = _default_settings_pane_widths(current_mode)
         left_width = self.settings_left_pane_width if self.settings_left_pane_width is not None else default_left
         right_width = self.settings_right_pane_width if self.settings_right_pane_width is not None else default_right
         if side == "left":
@@ -2466,7 +2973,7 @@ class DesktopWorkbench:
         """Restore the settings shell sidebars to the current mode defaults."""
 
         self.settings_panes_user_resized = False
-        left_width, right_width = self._default_settings_pane_widths(bool(self.compact_window_mode.get()))
+        left_width, right_width = _default_settings_pane_widths(bool(self.compact_window_mode.get()))
         self._apply_settings_pane_widths(left_width, right_width)
 
     def _apply_responsive_layout(self, *_args: Any) -> None:
@@ -2548,10 +3055,10 @@ class DesktopWorkbench:
             self.settings_pane_after_id = None
 
     def _report_callback_exception(
-        self,
-        exc_type: type[BaseException],
-        exc_value: BaseException,
-        exc_traceback: Any,
+            self,
+            exc_type: type[BaseException],
+            exc_value: BaseException,
+            exc_traceback: Any,
     ) -> None:
         """Route Tk callback failures into project logging instead of noisy stderr output."""
 
@@ -2574,77 +3081,6 @@ class DesktopWorkbench:
         else:
             label.configure(text=text)
         label.configure(style=self.BADGE_STYLES.get(tone, "NeutralBadge.TLabel"))
-
-    def _decision_badge_text(self, decision: str) -> tuple[str, str]:
-        """Return a visible badge string and semantic tone for one screening decision."""
-
-        normalized = decision.strip().lower()
-        if normalized == "include":
-            return "[INC] Include", "success"
-        if normalized == "maybe":
-            return "[MAY] Maybe", "warning"
-        if normalized == "exclude":
-            return "[EXC] Exclude", "danger"
-        if normalized:
-            return f"[{normalized[:3].upper()}] {decision}", "neutral"
-        return "[REV] Not screened", "muted"
-
-    def _research_fit_badge_text(self, fit_label: str) -> tuple[str, str]:
-        """Return a visible badge string and tone for one research-fit label."""
-
-        normalized = fit_label.strip().upper()
-        if normalized == "STRONG_FIT":
-            return "[FIT] Strong fit", "success"
-        if normalized == "NEAR_FIT":
-            return "[FIT] Near fit", "warning"
-        if normalized == "WEAK_FIT":
-            return "[FIT] Weak fit", "danger"
-        if normalized:
-            return f"[FIT] {fit_label}", "neutral"
-        return "[FIT] Not scored", "muted"
-
-    def _coerce_json_list(self, value: Any) -> list[Any]:
-        """Normalize list-like row values that may arrive as JSON strings."""
-
-        if isinstance(value, list):
-            return value
-        if isinstance(value, str):
-            candidate = value.strip()
-            if not candidate:
-                return []
-            try:
-                parsed = json.loads(candidate)
-            except json.JSONDecodeError:
-                return [item.strip() for item in candidate.split(";") if item.strip()]
-            return parsed if isinstance(parsed, list) else []
-        return []
-
-    def _topic_detail_payload(self, row: dict[str, Any]) -> tuple[list[str], list[dict[str, Any]]]:
-        """Extract research-fit topics and per-keyword evidence from a row payload."""
-
-        screening_details = row.get("screening_details")
-        extracted_topics = row.get("topic_prefilter_extracted_topics")
-        keyword_details = row.get("topic_prefilter_keyword_details")
-        if isinstance(screening_details, dict):
-            extracted_topics = screening_details.get("topic_prefilter_extracted_topics", extracted_topics)
-            keyword_details = screening_details.get("topic_prefilter_keyword_details", keyword_details)
-        normalized_details: list[dict[str, Any]] = []
-        for entry in self._coerce_json_list(keyword_details):
-            if isinstance(entry, dict):
-                normalized_details.append(entry)
-        normalized_topics = [str(topic).strip() for topic in self._coerce_json_list(extracted_topics) if str(topic).strip()]
-        return normalized_topics, normalized_details
-
-    def _row_value(self, row: dict[str, Any], key: str) -> Any:
-        """Read a value from either the flat row payload or nested screening details."""
-
-        value = row.get(key)
-        if value not in {None, ""}:
-            return value
-        screening_details = row.get("screening_details")
-        if isinstance(screening_details, dict):
-            return screening_details.get(key)
-        return value
 
     def _build_layout(self) -> None:
         """Construct the top-level toolbar, notebook, and status bar widgets."""
@@ -3454,14 +3890,14 @@ class DesktopWorkbench:
         self._render_inline_field_help(container, field_name, row=1, column=0, pady=(4, 0))
 
     def _render_inline_field_help(
-        self,
-        parent: ttk.Frame,
-        field_name: str,
-        *,
-        row: int,
-        column: int,
-        columnspan: int = 1,
-        pady: tuple[int, int] = (0, 0),
+            self,
+            parent: ttk.Frame,
+            field_name: str,
+            *,
+            row: int,
+            column: int,
+            columnspan: int = 1,
+            pady: tuple[int, int] = (0, 0),
     ) -> None:
         """Render a persistent short explanation below discovery controls when configured."""
 
@@ -3809,7 +4245,7 @@ class DesktopWorkbench:
             destination_frame,
             textvariable=self.quick_destination_var,
             state="readonly",
-            values=list(self._quick_destinations().keys()),
+            values=list(_quick_destinations().keys()),
         )
         self.quick_destination_combo.grid(row=1, column=0, sticky="ew")
         self.quick_destination_combo.bind("<<ComboboxSelected>>", lambda _event: self._open_selected_destination())
@@ -3818,7 +4254,7 @@ class DesktopWorkbench:
             "Pick a high-traffic destination such as models, outputs, connections, or the pass builder, then open it from a single compact control.",
         )
         if not self.quick_destination_var.get():
-            self.quick_destination_var.set(next(iter(self._quick_destinations().keys())))
+            self.quick_destination_var.set(next(iter(_quick_destinations().keys())))
         destination_button = ttk.Button(
             destination_frame,
             text="Open selected destination",
@@ -3867,7 +4303,7 @@ class DesktopWorkbench:
             guides_tab,
             textvariable=self.guide_choice_var,
             state="readonly",
-            values=list(self._guide_shortcuts().keys()),
+            values=list(_guide_shortcuts().keys()),
         )
         self.guide_choice_combo.grid(row=1, column=0, sticky="ew")
         self.guide_choice_combo.bind("<<ComboboxSelected>>", lambda _event: self._open_selected_guide_shortcut())
@@ -3876,7 +4312,7 @@ class DesktopWorkbench:
             "Choose one of the focused handbook guides for models, outputs, API keys, runtime tuning, or toolbar actions.",
         )
         if not self.guide_choice_var.get():
-            self.guide_choice_var.set(next(iter(self._guide_shortcuts().keys())))
+            self.guide_choice_var.set(next(iter(_guide_shortcuts().keys())))
         guide_button = ttk.Button(
             guides_tab,
             text="Open selected guide",
@@ -4262,31 +4698,6 @@ class DesktopWorkbench:
                 entries.append((field_name, f"{section_name} -> {label}"))
         return entries
 
-    def _quick_destinations(self) -> dict[str, tuple[str, str | None]]:
-        """Return compact quick-destination choices for the settings inspector."""
-
-        return {
-            "Model provider and pass chain": ("llm_provider", None),
-            "Threshold sliders": ("relevance_threshold", None),
-            "Output toggles": ("output_csv", None),
-            "Storage paths": ("database_path", None),
-            "API keys and endpoints": ("openai_api_key", None),
-            "Runtime tuning": ("max_workers", None),
-            "Verbose logging": ("verbosity", None),
-            "Pass chain editor": ("analysis_passes", "pass_builder"),
-        }
-
-    def _guide_shortcuts(self) -> dict[str, str]:
-        """Return the handbook guide shortcuts shown in the inspector."""
-
-        return {
-            "Model guide": "guide:models",
-            "Output guide": "guide:outputs",
-            "API guide": "guide:api_keys",
-            "Runtime guide": "guide:runtime_tuning",
-            "Actions guide": "guide:actions",
-        }
-
     def _refresh_settings_search_results(self) -> None:
         """Filter the settings search list based on the current query string."""
 
@@ -4322,7 +4733,7 @@ class DesktopWorkbench:
         selected = self.quick_destination_var.get().strip()
         if not selected:
             return
-        field_name, action = self._quick_destinations().get(selected, ("", None))
+        field_name, action = _quick_destinations().get(selected, ("", None))
         if action == "pass_builder":
             self._focus_field(field_name)
             self._open_pass_builder()
@@ -4336,7 +4747,7 @@ class DesktopWorkbench:
         selected = self.guide_choice_var.get().strip()
         if not selected:
             return
-        entry_id = self._guide_shortcuts().get(selected)
+        entry_id = _guide_shortcuts().get(selected)
         if entry_id:
             self._open_handbook_entry(entry_id)
 
@@ -4514,55 +4925,12 @@ class DesktopWorkbench:
         output_lines.append("")
         output_lines.extend(path_groups)
 
-        self._write_summary_widget(self.model_summary_text, "\n".join(model_lines))
-        self._write_summary_widget(self.output_summary_text, "\n".join(output_lines))
-        preview_text = self._build_export_preview_text(values)
-        self._write_summary_widget(self.export_preview_text, preview_text)
-        self._write_summary_widget(self.outputs_preview_text, preview_text)
+        _write_summary_widget(self.model_summary_text, "\n".join(model_lines))
+        _write_summary_widget(self.output_summary_text, "\n".join(output_lines))
+        preview_text = _build_export_preview_text(values)
+        _write_summary_widget(self.export_preview_text, preview_text)
+        _write_summary_widget(self.outputs_preview_text, preview_text)
         self._refresh_provider_health(values)
-
-    def _build_export_preview_text(self, values: dict[str, Any]) -> str:
-        """Describe the artifact set that the current settings would produce if the run started now."""
-
-        results_dir = Path(str(values.get("results_dir", "results") or "results"))
-        papers_dir = Path(str(values.get("papers_dir", "papers") or "papers"))
-        relevant_dir_raw = str(values.get("relevant_pdfs_dir", "") or "").strip()
-        relevant_dir = Path(relevant_dir_raw) if relevant_dir_raw else papers_dir / "relevant"
-        planned_artifacts = [
-            ("papers.csv", values.get("output_csv"), results_dir / "papers.csv", "Merged and screened paper table."),
-            ("included_papers.csv", values.get("output_csv"), results_dir / "included_papers.csv", "Accepted shortlist with reasons."),
-            ("excluded_papers.csv", values.get("output_csv"), results_dir / "excluded_papers.csv", "Excluded records with reasons."),
-            ("top_papers.json", values.get("output_json"), results_dir / "top_papers.json", "Structured ranking and shortlist JSON."),
-            ("review_summary.md", values.get("output_markdown"), results_dir / "review_summary.md", "Narrative review summary."),
-            ("included_papers.db", values.get("output_sqlite_exports"), results_dir / "included_papers.db", "Included-paper SQLite export."),
-            ("excluded_papers.db", values.get("output_sqlite_exports"), results_dir / "excluded_papers.db", "Excluded-paper SQLite export."),
-            ("prisma_flow.json", values.get("output_json"), results_dir / "prisma_flow.json", "Machine-readable PRISMA flow summary."),
-            ("citation_graph.json", values.get("output_json"), results_dir / "citation_graph.json", "Citation graph export when available."),
-            ("pipeline.log", True, Path(str(values.get("log_file_path", "") or results_dir / "pipeline.log")), "Persistent structured run log."),
-        ]
-        lines = [
-            "This preview is generated from the live UI settings before the run starts.",
-            f"Discovery stage: {'On' if values.get('discovery_stage_enabled') else 'Off'}",
-            f"AI evaluation: {'On' if values.get('ai_evaluation_enabled') else 'Off'}",
-            f"Run mode: {values.get('run_mode')}",
-            f"Results directory: {results_dir}",
-            "",
-            "Planned artifacts:",
-        ]
-        for label, enabled, target, description in planned_artifacts:
-            state = "enabled" if enabled else "disabled"
-            lines.append(f"- {label}: {state} -> {target}")
-            lines.append(f"  {description}")
-        lines.append("")
-        if values.get("download_pdfs"):
-            lines.append(f"Paper PDFs: enabled -> {papers_dir}")
-            if str(values.get("pdf_download_mode", "all")) == "relevant_only":
-                lines.append(f"Relevant-only PDF folder: {relevant_dir}")
-            else:
-                lines.append("All available PDFs stay in the main paper PDF folder.")
-        else:
-            lines.append("Paper PDFs: disabled")
-        return "\n".join(lines)
 
     def _refresh_provider_health(self, values: dict[str, Any]) -> None:
         """Update the provider-health summary based on enabled sources, credentials, and model selection."""
@@ -4649,36 +5017,6 @@ class DesktopWorkbench:
                 tag = "attention"
             self.provider_health_tree.insert("", tk.END, values=(provider, status, reason), tags=(tag,))
 
-    def _display_table_value(self, column: str, row_payload: dict[str, Any]) -> str:
-        """Return a user-facing table value with compact badges for high-signal columns."""
-
-        value = str(row_payload.get(column, "") or "")
-        if not value and isinstance(row_payload.get("screening_details"), dict):
-            value = str(row_payload["screening_details"].get(column, "") or "")
-        if column == "inclusion_decision":
-            badge_text, _tone = self._decision_badge_text(value)
-            return badge_text
-        if column == "topic_prefilter_research_fit_label":
-            badge_text, _tone = self._research_fit_badge_text(value)
-            return badge_text
-        if column == "relevance_score" and value.strip():
-            return f"[SCORE] {value}"
-        if column == "topic_prefilter_weighted_score" and value.strip():
-            return f"[FIT] {value}"
-        if column == "source" and value.strip():
-            return f"[SRC] {value}"
-        return value[:500]
-
-    def _write_summary_widget(self, widget: tk.Text | None, text: str) -> None:
-        """Render summary text into a read-only scrolled text widget."""
-
-        if widget is None:
-            return
-        widget.configure(state="normal")
-        widget.delete("1.0", tk.END)
-        widget.insert("1.0", text)
-        widget.configure(state="disabled")
-
     def _create_scrolled_text_widget(
             self,
             parent: tk.Widget,
@@ -4738,38 +5076,10 @@ class DesktopWorkbench:
             "vertical": vertical_scrollbar,
             "horizontal": horizontal_scrollbar,
         }
-        self._configure_status_tree_tags(tree_widget)
+        _configure_status_tree_tags(tree_widget)
         self._bind_scroll_target(shell, target=tree_widget)
         self._bind_scroll_target(tree_widget)
         return shell, tree_widget
-
-    def _configure_status_tree_tags(self, tree_widget: ttk.Treeview) -> None:
-        """Define reusable status and decision color tags for result-oriented tables."""
-
-        tag_styles = {
-            "include": {"background": "#eafaf1", "foreground": "#0f8a4a"},
-            "maybe": {"background": "#fff5e8", "foreground": "#b56a00"},
-            "exclude": {"background": "#fff0ef", "foreground": "#c24136"},
-            "completed": {"background": "#eafaf1", "foreground": "#0f8a4a"},
-            "stopped": {"background": "#fff5e8", "foreground": "#b56a00"},
-            "failed": {"background": "#fff0ef", "foreground": "#c24136"},
-            "warning": {"background": "#fff5e8", "foreground": "#b56a00"},
-            "ready": {"background": "#eafaf1", "foreground": "#0f8a4a"},
-            "attention": {"background": "#fff5e8", "foreground": "#b56a00"},
-            "strong_fit": {"background": "#eafaf1", "foreground": "#0f8a4a"},
-            "near_fit": {"background": "#fff5e8", "foreground": "#b56a00"},
-            "weak_fit": {"background": "#fff0ef", "foreground": "#c24136"},
-            "muted": {"background": "#f3f5f8", "foreground": "#667085"},
-            "artifact_csv": {"background": "#eef8ff", "foreground": "#175cd3"},
-            "artifact_json": {"background": "#eef4ff", "foreground": "#3538cd"},
-            "artifact_markdown": {"background": "#f5f3ff", "foreground": "#6938ef"},
-            "artifact_sqlite": {"background": "#eefbf3", "foreground": "#067647"},
-            "artifact_pdf": {"background": "#fff1f3", "foreground": "#c01048"},
-            "artifact_folder": {"background": "#fff7ed", "foreground": "#c2410c"},
-            "artifact_file": {"background": "#f8fafc", "foreground": "#475467"},
-        }
-        for tag_name, style in tag_styles.items():
-            tree_widget.tag_configure(tag_name, **style)
 
     def _create_scrolled_canvas_widget(
             self,
@@ -5066,7 +5376,7 @@ class DesktopWorkbench:
             )
             for entry in passes
         ]
-        self._set_text_widget_value(widget, "\n".join(lines))
+        _set_text_widget_value(widget, "\n".join(lines))
         self._refresh_settings_overview()
 
     def _current_topic_keyword_rules(self) -> list[dict[str, Any]]:
@@ -5117,7 +5427,7 @@ class DesktopWorkbench:
             for entry in rules
             if str(entry.get("keyword", "")).strip()
         ]
-        self._set_text_widget_value(widget, "\n".join(lines))
+        _set_text_widget_value(widget, "\n".join(lines))
         self._refresh_settings_overview()
 
     def _open_topic_keyword_rule_builder(self) -> None:
@@ -5180,9 +5490,9 @@ class DesktopWorkbench:
             height=14,
         )
         for column, title, width, anchor in (
-            ("keyword", "Keyword or topic", 360, "w"),
-            ("weight", "Weight", 90, "e"),
-            ("threshold", "Threshold %", 110, "e"),
+                ("keyword", "Keyword or topic", 360, "w"),
+                ("weight", "Weight", 90, "e"),
+                ("threshold", "Threshold %", 110, "e"),
         ):
             tree.heading(column, text=title)
             tree.column(column, width=width, anchor=anchor)
@@ -5222,7 +5532,7 @@ class DesktopWorkbench:
                     f"{index}. {entry['keyword']} uses weight {float(entry['weight']):.2f} and requires "
                     f"at least {float(entry['threshold']):.0f}% topic match before it counts as a strong match."
                 )
-            self._write_summary_widget(summary, "\n\n".join(summary_lines) if summary_lines else "No keyword rules are defined.")
+            _write_summary_widget(summary, "\n\n".join(summary_lines) if summary_lines else "No keyword rules are defined.")
             if rules:
                 selected = tree.selection() or (tree.get_children()[0],)
                 tree.selection_set(selected[0])
@@ -5246,7 +5556,7 @@ class DesktopWorkbench:
                 "- NEAR if actual match % is below the threshold by at most 5 points.",
                 "- MISSED if actual match % is more than 5 points below the threshold.",
             ]
-            self._write_summary_widget(preview, "\n".join(preview_lines))
+            _write_summary_widget(preview, "\n".join(preview_lines))
 
         def load_selected(_event: Any | None = None) -> None:
             selection = tree.selection()
@@ -5364,14 +5674,6 @@ class DesktopWorkbench:
             form_vars["threshold"].set(float(first["threshold"]))
         sync_labels()
         refresh_tree()
-
-    def _validate_pass_builder_name(self, name: str, parent: tk.Misc) -> bool:
-        """Return ``True`` when a pass builder row has a valid name, else show an error."""
-
-        if name.strip():
-            return True
-        messagebox.showerror("Pass name required", "Enter a pass name before saving.", parent=parent)
-        return False
 
     def _open_pass_builder(self) -> None:
         """Open a small visual editor for chained multi-pass model configuration."""
@@ -5503,7 +5805,7 @@ class DesktopWorkbench:
                 else:
                     line += " Starts for every paper that reaches this stage."
                 chain_lines.append(line)
-            self._write_summary_widget(chain_summary, "\n\n".join(chain_lines) if chain_lines else "No passes are currently defined.")
+            _write_summary_widget(chain_summary, "\n\n".join(chain_lines) if chain_lines else "No passes are currently defined.")
             if entries:
                 selected = tree.selection() or (tree.get_children()[0],)
                 tree.selection_set(selected[0])
@@ -5556,7 +5858,7 @@ class DesktopWorkbench:
                     f"Entry gate: {gate_text}",
                 ]
             )
-            self._write_summary_widget(pass_preview, preview)
+            _write_summary_widget(pass_preview, preview)
 
         def load_selected(_event: Any | None = None) -> None:
             selection = tree.selection()
@@ -5582,7 +5884,7 @@ class DesktopWorkbench:
 
         def save_current() -> None:
             name = form_vars["name"].get().strip()
-            if not self._validate_pass_builder_name(name, dialog):
+            if not _validate_pass_builder_name(name, dialog):
                 return
             entry = {
                 "name": name,
@@ -5834,7 +6136,7 @@ class DesktopWorkbench:
             tree_shell, tree = self._create_scrolled_tree_widget(container, key=key, show="headings")
             panes.add(header_panel)
             panes.add(tree_shell)
-            self.root.after(0, lambda pane=panes, top=header_panel: self._initialize_table_pane_position(pane, top))
+            self.root.after(0, lambda pane=panes, top=header_panel: _initialize_table_pane_position(pane, top))
         else:
             container.rowconfigure(2, weight=1)
             ttk.Label(container, text=title_text, style="PageTitle.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 6))
@@ -5850,21 +6152,6 @@ class DesktopWorkbench:
         tree.bind("<Double-1>", lambda _event, table_key=key: self._open_document_from_table(table_key))
         self.treeviews[key] = tree
         self.table_frames[key] = container
-
-    def _initialize_table_pane_position(self, pane: ttk.Panedwindow, top_panel: ttk.Frame) -> None:
-        """Set a readable default split for vertically resizable table tabs."""
-
-        try:
-            if not pane.winfo_exists():
-                return
-            pane.update_idletasks()
-            preferred_height = max(int(top_panel.winfo_reqheight() or 0) + 18, 120)
-            total_height = int(pane.winfo_height() or 0)
-            if total_height <= 0:
-                return
-            pane.sashpos(0, min(preferred_height, max(total_height - 180, 120)))
-        except tk.TclError:
-            return
 
     def _build_document_tab(self) -> None:
         """Create an embedded document viewer for selected paper rows."""
@@ -6007,11 +6294,11 @@ class DesktopWorkbench:
             wrap="word",
         )
         content_shell.grid(row=0, column=0, sticky="nsew")
-        self._write_summary_widget(
+        _write_summary_widget(
             self.document_summary_text,
             "No paper is selected yet. Double-click a paper in All Papers, Included, Excluded, or Screening Audit.",
         )
-        self._write_summary_widget(
+        _write_summary_widget(
             self.document_content_text,
             "Document preview will appear here when a local PDF or text-based artifact is available.",
         )
@@ -6156,7 +6443,7 @@ class DesktopWorkbench:
             wrap="word",
         )
         chart_text_shell.grid(row=0, column=0, sticky="nsew")
-        self._write_summary_widget(self.charts_summary_text, "No chart data is available yet. Start a run or refresh a results directory.")
+        _write_summary_widget(self.charts_summary_text, "No chart data is available yet. Start a run or refresh a results directory.")
 
     def _build_run_history_tab(self) -> None:
         """Create a run-history browser backed by a lightweight JSON file."""
@@ -6292,7 +6579,7 @@ class DesktopWorkbench:
             wrap="word",
         )
         screening_text_shell.grid(row=1, column=0, sticky="nsew")
-        self._write_summary_widget(
+        _write_summary_widget(
             self.screening_audit_text,
             "No screening audit is available yet. Start a run or refresh a results directory to inspect keep/exclude reasons.",
         )
@@ -6366,7 +6653,7 @@ class DesktopWorkbench:
             wrap="word",
         )
         research_fit_text_shell.grid(row=1, column=0, sticky="nsew")
-        self._write_summary_widget(
+        _write_summary_widget(
             self.research_fit_text,
             "No research-fit analysis is available yet. Run screening with the topic prefilter enabled to inspect extracted topics and weighted keyword evidence.",
         )
@@ -6388,7 +6675,7 @@ class DesktopWorkbench:
             self._set_badge_label(self.research_fit_strong_badge, "[FIT] 0 strong", "success")
             self._set_badge_label(self.research_fit_near_badge, "[FIT] 0 near", "warning")
             self._set_badge_label(self.research_fit_weak_badge, "[FIT] 0 weak", "danger")
-            self._write_summary_widget(
+            _write_summary_widget(
                 self.research_fit_text,
                 "No papers.csv file is available yet, so the research-fit workspace is empty.",
             )
@@ -6422,9 +6709,9 @@ class DesktopWorkbench:
                 values=(
                     str(row_payload.get("title", ""))[:120],
                     fit_label.replace("_", " ").title(),
-                    self._display_table_value("topic_prefilter_weighted_score", row_payload),
-                    self._format_research_fit_match_summary(row_payload),
-                    self._display_table_value("topic_prefilter_label", row_payload),
+                    _display_table_value("topic_prefilter_weighted_score", row_payload),
+                    _format_research_fit_match_summary(row_payload),
+                    _display_table_value("topic_prefilter_label", row_payload),
                 ),
                 tags=(tag,),
             )
@@ -6437,7 +6724,7 @@ class DesktopWorkbench:
             self.research_fit_tree.focus(first_item)
             self._render_research_fit_row(first_item)
         else:
-            self._write_summary_widget(
+            _write_summary_widget(
                 self.research_fit_text,
                 "Papers loaded, but no research-fit details are available yet. Enable the topic prefilter to see extracted topics and keyword evidence.",
             )
@@ -6458,14 +6745,14 @@ class DesktopWorkbench:
         row = self.research_fit_rows.get(item_id)
         if not row:
             return
-        extracted_topics, keyword_details = self._topic_detail_payload(row)
-        research_fit_label = self._row_value(row, "topic_prefilter_research_fit_label")
-        weighted_score = self._row_value(row, "topic_prefilter_weighted_score")
-        matched_count = self._row_value(row, "topic_prefilter_matched_keyword_count")
-        rule_count = self._row_value(row, "topic_prefilter_keyword_rule_count")
-        min_matches = self._row_value(row, "topic_prefilter_min_keyword_matches")
-        semantic_label = self._row_value(row, "topic_prefilter_label")
-        semantic_similarity = self._row_value(row, "topic_prefilter_similarity")
+        extracted_topics, keyword_details = _topic_detail_payload(row)
+        research_fit_label = _row_value(row, "topic_prefilter_research_fit_label")
+        weighted_score = _row_value(row, "topic_prefilter_weighted_score")
+        matched_count = _row_value(row, "topic_prefilter_matched_keyword_count")
+        rule_count = _row_value(row, "topic_prefilter_keyword_rule_count")
+        min_matches = _row_value(row, "topic_prefilter_min_keyword_matches")
+        semantic_label = _row_value(row, "topic_prefilter_label")
+        semantic_similarity = _row_value(row, "topic_prefilter_similarity")
         lines = [
             f"Title: {row.get('title', '')}",
             f"Research fit: {research_fit_label or '(not available)'}",
@@ -6506,7 +6793,7 @@ class DesktopWorkbench:
         explanation = str(row.get("relevance_explanation", "") or "").strip()
         if explanation:
             lines.extend(["", f"Screening explanation: {explanation}"])
-        self._write_summary_widget(self.research_fit_text, "\n".join(lines))
+        _write_summary_widget(self.research_fit_text, "\n".join(lines))
 
     def _open_document_from_research_fit(self) -> None:
         """Open the selected research-fit row in the embedded document viewer."""
@@ -6521,21 +6808,6 @@ class DesktopWorkbench:
             return
         self._show_document_preview(row, source_label="Research Fit")
 
-    def _format_research_fit_match_summary(self, row: dict[str, Any]) -> str:
-        """Return the matched-rule summary shown in the Research Fit table."""
-
-        matched = self._row_value(row, "topic_prefilter_matched_keyword_count")
-        total = self._row_value(row, "topic_prefilter_keyword_rule_count")
-        try:
-            matched_value = int(float(matched or 0))
-        except (TypeError, ValueError):
-            matched_value = 0
-        try:
-            total_value = int(float(total or 0))
-        except (TypeError, ValueError):
-            total_value = 0
-        return f"{matched_value} / {total_value}"
-
     def _apply_form_values(self, values: dict[str, Any]) -> None:
         """Populate the visible form controls from a flat dictionary of values."""
 
@@ -6544,7 +6816,7 @@ class DesktopWorkbench:
             if field_name in self.placeholder_widgets:
                 self._set_placeholder_text(field_name, text_value)
             else:
-                self._set_text_widget_value(widget, text_value)
+                _set_text_widget_value(widget, text_value)
         for field_name, variable in self.scalar_vars.items():
             variable.set(values.get(field_name, variable.get()))
         for field_name in self.placeholder_widgets:
@@ -6577,7 +6849,7 @@ class DesktopWorkbench:
                 continue
             widget = self.placeholder_widgets[field_name]
             mode = self.placeholder_modes[field_name]
-            values[field_name] = self._placeholder_safe_value(field_name, self._get_widget_content(widget, mode))
+            values[field_name] = self._placeholder_safe_value(field_name, _get_widget_content(widget, mode))
         values["ui_settings_mode"] = self.settings_mode_var.get()
         values["ui_show_advanced_settings"] = bool(self.show_advanced_settings.get())
         profile_name = self.profile_combo.get().strip()
@@ -6608,17 +6880,6 @@ class DesktopWorkbench:
                 )
         return messages
 
-    def _set_text_widget_value(self, widget: tk.Text, text: str) -> None:
-        """Write text into a Tk text widget, temporarily unlocking read-only widgets when needed."""
-
-        previous_state = str(widget.cget("state"))
-        if previous_state == "disabled":
-            widget.configure(state="normal")
-        widget.delete("1.0", tk.END)
-        widget.insert("1.0", text)
-        if previous_state == "disabled":
-            widget.configure(state="disabled")
-
     def _register_placeholder(self, key: str, widget: tk.Widget, placeholder: str, *, mode: str) -> None:
         """Attach placeholder behavior to editable entry-like widgets."""
 
@@ -6630,31 +6891,12 @@ class DesktopWorkbench:
         widget.bind("<FocusOut>", lambda _event, name=key: self._restore_placeholder_if_empty(name), add="+")
         self._restore_placeholder_if_empty(key)
 
-    def _set_widget_content(self, widget: tk.Widget, mode: str, text: str) -> None:
-        """Write text into either an entry-like widget or a Tk text widget."""
-
-        if mode == "text":
-            self._set_text_widget_value(widget, text)  # type: ignore[arg-type]
-            return
-        if isinstance(widget, ttk.Entry):
-            widget.delete(0, tk.END)
-            widget.insert(0, text)
-
-    def _get_widget_content(self, widget: tk.Widget, mode: str) -> str:
-        """Read text from a placeholder-aware widget."""
-
-        if mode == "text":
-            return widget.get("1.0", tk.END).strip()  # type: ignore[call-arg]
-        if isinstance(widget, ttk.Entry):
-            return widget.get().strip()
-        return ""
-
     def _set_placeholder_visual_state(self, widget: tk.Widget, *, active: bool) -> None:
         """Apply a lightweight visual cue when a placeholder is currently displayed."""
 
-        foreground = self.PALETTE["muted_text"] if active else self.PALETTE["text"]
+        self.PALETTE["muted_text"] if active else self.PALETTE["text"]
         try:
-            widget.configure(foreground=foreground)
+            widget.configure()
         except tk.TclError:
             pass
 
@@ -6663,11 +6905,11 @@ class DesktopWorkbench:
 
         widget = self.placeholder_widgets[key]
         mode = self.placeholder_modes[key]
-        current = self._get_widget_content(widget, mode)
+        current = _get_widget_content(widget, mode)
         placeholder = self.placeholder_texts.get(key, "").strip()
         if not self.placeholder_active.get(key) and current != placeholder:
             return
-        self._set_widget_content(widget, mode, "")
+        _set_widget_content(widget, mode, "")
         self.placeholder_active[key] = False
         self._set_placeholder_visual_state(widget, active=False)
 
@@ -6676,7 +6918,7 @@ class DesktopWorkbench:
 
         widget = self.placeholder_widgets[key]
         mode = self.placeholder_modes[key]
-        current = self._get_widget_content(widget, mode)
+        current = _get_widget_content(widget, mode)
         placeholder = self.placeholder_texts[key].strip()
         if current == placeholder:
             self.placeholder_active[key] = True
@@ -6686,7 +6928,7 @@ class DesktopWorkbench:
             self.placeholder_active[key] = False
             self._set_placeholder_visual_state(widget, active=False)
             return
-        self._set_widget_content(widget, mode, self.placeholder_texts[key])
+        _set_widget_content(widget, mode, self.placeholder_texts[key])
         self.placeholder_active[key] = True
         self._set_placeholder_visual_state(widget, active=True)
 
@@ -6698,11 +6940,11 @@ class DesktopWorkbench:
         widget = self.placeholder_widgets[key]
         mode = self.placeholder_modes[key]
         if text.strip():
-            self._set_widget_content(widget, mode, text)
+            _set_widget_content(widget, mode, text)
             self.placeholder_active[key] = False
             self._set_placeholder_visual_state(widget, active=False)
             return
-        self._set_widget_content(widget, mode, "")
+        _set_widget_content(widget, mode, "")
         self._restore_placeholder_if_empty(key)
 
     def _placeholder_safe_value(self, key: str, raw_value: str) -> str:
@@ -6758,12 +7000,12 @@ class DesktopWorkbench:
             self.profile_combo["values"] = self.profile_manager.list_profiles()
 
     def _start_run(
-        self,
-        *,
-        discovery_stage_override: bool | None = None,
-        ai_evaluation_override: bool | None = None,
-        skip_discovery_override: bool | None = None,
-        run_mode_override: str | None = None,
+            self,
+            *,
+            discovery_stage_override: bool | None = None,
+            ai_evaluation_override: bool | None = None,
+            skip_discovery_override: bool | None = None,
+            run_mode_override: str | None = None,
     ) -> None:
         """Validate the current form and launch the pipeline on a background worker thread."""
 
@@ -7015,7 +7257,7 @@ class DesktopWorkbench:
         if self.screening_audit_tree is not None:
             for item in self.screening_audit_tree.get_children():
                 self.screening_audit_tree.delete(item)
-        self._write_summary_widget(
+        _write_summary_widget(
             self.screening_audit_text,
             "No screening audit is available yet. Start a run or refresh a results directory to inspect keep/exclude reasons.",
         )
@@ -7052,26 +7294,26 @@ class DesktopWorkbench:
         self._clear_run_log()
         self._clear_run_history()
         self._clear_screening_audit()
-        self._write_summary_widget(
+        _write_summary_widget(
             self.research_fit_text,
             "No research-fit analysis is available yet. Run screening with the topic prefilter enabled to inspect extracted topics and weighted keyword evidence.",
         )
         self._set_badge_label(self.research_fit_strong_badge, "[FIT] 0 strong", "success")
         self._set_badge_label(self.research_fit_near_badge, "[FIT] 0 near", "warning")
         self._set_badge_label(self.research_fit_weak_badge, "[FIT] 0 weak", "danger")
-        self._write_summary_widget(
+        _write_summary_widget(
             self.artifact_summary_text,
             "No artifact paths are available yet. Start a run or refresh a results directory to populate this browser.",
         )
-        self._write_summary_widget(
+        _write_summary_widget(
             self.charts_summary_text,
             "No chart data is available yet. Start a run or refresh a results directory.",
         )
-        self._write_summary_widget(
+        _write_summary_widget(
             self.document_summary_text,
             "No paper is selected yet. Double-click a paper in All Papers, Included, Excluded, or Screening Audit.",
         )
-        self._write_summary_widget(
+        _write_summary_widget(
             self.document_content_text,
             "Document preview will appear here when a local PDF or text-based artifact is available.",
         )
@@ -7138,7 +7380,7 @@ class DesktopWorkbench:
                 "",
                 tk.END,
                 iid=item_id,
-                values=[self._display_table_value(column, row_payload) for column in columns],
+                values=[_display_table_value(column, row_payload) for column in columns],
                 tags=tags,
             )
 
@@ -7214,11 +7456,11 @@ class DesktopWorkbench:
                     paper = ingestor.ingest_link(value)
                 else:
                     paper = ingestor.ingest_pdf(value)
-                stored_paper = self._persist_manual_paper(config, database, paper)
+                stored_paper = _persist_manual_paper(config, database, paper)
                 all_papers = database.get_papers_for_query(config.query_key)
             finally:
                 database.close()
-            report_paths = self._regenerate_manual_outputs(config, all_papers)
+            report_paths = _regenerate_manual_outputs(config, all_papers)
             self._refresh_manual_results(
                 config,
                 all_papers,
@@ -7230,60 +7472,14 @@ class DesktopWorkbench:
             LOGGER.exception("Manual paper intake failed: %s", exc)
             messagebox.showerror("Manual paper intake failed", str(exc))
 
-    def _persist_manual_paper(
-        self,
-        config: Any,
-        database: DatabaseManager,
-        paper: PaperMetadata,
-    ) -> PaperMetadata:
-        """Store one manual paper and run the current screening stack against it."""
-
-        screener = AIScreener(config)
-        stored = database.upsert_papers([paper], config.query_key)
-        stored_paper = stored[0]
-        if stored_paper.pdf_path:
-            excerpt = FullTextExtractor(max_chars=config.full_text_max_chars).extract_excerpt(stored_paper.pdf_path)
-            if excerpt:
-                stored_paper = stored_paper.model_copy(
-                    update={
-                        "raw_payload": {**stored_paper.raw_payload, "full_text_excerpt": excerpt},
-                        "abstract": stored_paper.abstract or excerpt[:1600],
-                    }
-                )
-                stored_paper = database.upsert_papers([stored_paper], config.query_key)[0]
-        result = screener.screen(stored_paper).model_copy(update={"screening_context_key": config.screening_context_key})
-        screening_details = result.model_dump(mode="json")
-        database.update_screening_result(stored_paper.database_id or 0, result, screening_details)
-        refreshed = database.get_papers_for_query(config.query_key)
-        for candidate in refreshed:
-            if candidate.database_id == stored_paper.database_id:
-                return candidate
-        return stored_paper
-
-    def _regenerate_manual_outputs(self, config: Any, papers: list[PaperMetadata]) -> dict[str, str]:
-        """Regenerate the standard report artifacts after a manual paper edit."""
-
-        report_generator = ReportGenerator(config, AIScreener(config))
-        database = DatabaseManager(config.database_path)
-        stats = {
-            "discovered_count": len(papers),
-            "deduplicated_count": len(papers),
-            "screened_count": len([paper for paper in papers if paper.inclusion_decision]),
-            "decision_counts": database.get_decision_counts(config.query_key),
-        }
-        try:
-            return report_generator.generate(papers, stats=stats)
-        finally:
-            database.close()
-
     def _refresh_manual_results(
-        self,
-        config: Any,
-        papers: list[PaperMetadata],
-        report_paths: dict[str, str],
-        *,
-        focus_paper: PaperMetadata | None = None,
-        status_message: str,
+            self,
+            config: Any,
+            papers: list[PaperMetadata],
+            report_paths: dict[str, str],
+            *,
+            focus_paper: PaperMetadata | None = None,
+            status_message: str,
     ) -> None:
         """Refresh the UI state from the current database-backed paper list."""
 
@@ -7321,7 +7517,7 @@ class DesktopWorkbench:
         self.artifact_details = {}
         for item in self.outputs_tree.get_children():
             self.outputs_tree.delete(item)
-        for index, artifact in enumerate(self._artifact_entries_from_result(result)):
+        for index, artifact in enumerate(_artifact_entries_from_result(result)):
             item_id = f"artifact-{index}"
             self.outputs_tree.insert(
                 "",
@@ -7337,118 +7533,17 @@ class DesktopWorkbench:
             self.outputs_tree.focus(first_item)
             self._render_output_summary(first_item)
         else:
-            self._write_summary_widget(
+            _write_summary_widget(
                 self.artifact_summary_text,
                 "No artifact paths are available yet. Start a run or refresh a results directory to populate this browser.",
             )
-
-    def _artifact_entries_from_result(self, result: dict[str, Any]) -> list[dict[str, str]]:
-        """Extract likely filesystem artifacts from a pipeline result payload."""
-
-        entries: list[dict[str, str]] = []
-        allowed_suffixes = {".csv", ".json", ".md", ".db", ".txt", ".pdf"}
-        for label, raw_value in sorted(result.items()):
-            if not isinstance(raw_value, str):
-                continue
-            candidate = raw_value.strip()
-            if not candidate:
-                continue
-            path = Path(candidate)
-            label_lower = label.lower()
-            if path.suffix.lower() not in allowed_suffixes and not (
-                    label_lower.endswith(("_dir", "_path")) or "dir" in label_lower or "path" in label_lower
-            ):
-                continue
-            entries.append(
-                {
-                    "label": label,
-                    "display_label": f"{self._artifact_badge_for_path(path)} {label}",
-                    "path": str(path),
-                    "tag": self._artifact_tag_for_path(path),
-                    "summary": self._summarize_artifact_path(label, path),
-                }
-            )
-        return entries
-
-    def _artifact_badge_for_path(self, path: Path) -> str:
-        """Return a compact badge label for one artifact path."""
-
-        if path.is_dir() or path.suffix == "":
-            return "[DIR]"
-        return {
-            ".csv": "[CSV]",
-            ".json": "[JSON]",
-            ".md": "[MD]",
-            ".db": "[DB]",
-            ".pdf": "[PDF]",
-            ".txt": "[TXT]",
-        }.get(path.suffix.lower(), "[FILE]")
-
-    def _artifact_tag_for_path(self, path: Path) -> str:
-        """Return the semantic Treeview tag used for one artifact path."""
-
-        if path.is_dir() or path.suffix == "":
-            return "artifact_folder"
-        return {
-            ".csv": "artifact_csv",
-            ".json": "artifact_json",
-            ".md": "artifact_markdown",
-            ".db": "artifact_sqlite",
-            ".pdf": "artifact_pdf",
-        }.get(path.suffix.lower(), "artifact_file")
-
-    def _summarize_artifact_path(self, label: str, path: Path) -> str:
-        """Build a human-readable summary for one output artifact or directory."""
-
-        lines = [f"Artifact key: {label}", f"Resolved path: {path}"]
-        if path.exists():
-            if path.is_dir():
-                child_count = len(list(path.iterdir()))
-                lines.append("Artifact type: directory")
-                lines.append(f"Contains: {child_count} direct children")
-            elif path.suffix.lower() == ".csv":
-                try:
-                    dataframe = pd.read_csv(path)
-                    lines.append("Artifact type: CSV artifact")
-                    lines.append(f"Rows: {len(dataframe)}")
-                    lines.append(f"Columns: {', '.join(dataframe.columns[:8]) or '(none)'}")
-                except Exception:  # noqa: BLE001
-                    lines.append("Artifact type: CSV artifact")
-                    lines.append("Summary: could not parse the CSV preview.")
-            elif path.suffix.lower() == ".json":
-                try:
-                    payload = json.loads(path.read_text(encoding="utf-8"))
-                    lines.append("Artifact type: JSON artifact")
-                    if isinstance(payload, dict):
-                        lines.append(f"Top-level keys: {', '.join(list(payload.keys())[:8]) or '(none)'}")
-                    elif isinstance(payload, list):
-                        lines.append(f"Top-level items: {len(payload)}")
-                except Exception:  # noqa: BLE001
-                    lines.append("Artifact type: JSON artifact")
-                    lines.append("Summary: could not parse the JSON preview.")
-            elif path.suffix.lower() == ".md":
-                try:
-                    lines.append("Artifact type: Markdown artifact")
-                    lines.append(f"Approximate lines: {len(path.read_text(encoding='utf-8').splitlines())}")
-                except OSError:
-                    lines.append("Artifact type: Markdown artifact")
-                    lines.append("Summary: could not read the Markdown preview.")
-            elif path.suffix.lower() == ".db":
-                lines.append("Artifact type: SQLite database")
-                lines.append(f"File size: {path.stat().st_size} bytes")
-            else:
-                lines.append(f"Artifact type: {path.suffix.lower() or 'file'}")
-                lines.append(f"File size: {path.stat().st_size} bytes")
-        else:
-            lines.append("Artifact status: path does not exist yet. It may be planned for the next run.")
-        return "\n".join(lines)
 
     def _open_results_dir(self) -> None:
         """Open the configured results directory in the platform file manager."""
 
         values = self._collect_form_values()
         config = form_values_to_config(values)
-        self._open_path(Path(config.results_dir))
+        _open_path(Path(config.results_dir))
 
     def _open_selected_output(self) -> None:
         """Open the artifact currently selected in the outputs table."""
@@ -7462,7 +7557,7 @@ class DesktopWorkbench:
         values = item.get("values", [])
         if len(values) < 2:
             return
-        self._open_path(Path(values[1]))
+        _open_path(Path(values[1]))
 
     def _open_selected_output_parent(self) -> None:
         """Open the parent folder of the currently selected artifact."""
@@ -7476,7 +7571,7 @@ class DesktopWorkbench:
         if not artifact:
             return
         artifact_path = Path(artifact["path"])
-        self._open_path(artifact_path if artifact_path.is_dir() else artifact_path.parent)
+        _open_path(artifact_path if artifact_path.is_dir() else artifact_path.parent)
 
     def _handle_output_selection(self, _event: Any | None = None) -> None:
         """Render the artifact summary for the selected output item."""
@@ -7494,7 +7589,7 @@ class DesktopWorkbench:
         artifact = self.artifact_details.get(item_id)
         if not artifact:
             return
-        self._write_summary_widget(self.artifact_summary_text, artifact["summary"])
+        _write_summary_widget(self.artifact_summary_text, artifact["summary"])
 
     def _current_history_path(self) -> Path:
         """Return the UI run-history file path derived from the current data directory."""
@@ -7572,7 +7667,7 @@ class DesktopWorkbench:
             self.run_history_tree.focus(first_item)
             self._render_run_history_entry(first_item)
         else:
-            self._write_summary_widget(self.run_history_text, "No runs have been recorded in this workbench yet.")
+            _write_summary_widget(self.run_history_text, "No runs have been recorded in this workbench yet.")
             self._set_badge_label(self.run_history_status_badge, "[RUN] No runs", "muted")
             self._set_badge_label(self.run_history_mode_badge, "[MODE] Waiting", "info")
             self._set_badge_label(self.run_history_artifact_badge, "[ART] No artifacts", "neutral")
@@ -7610,7 +7705,7 @@ class DesktopWorkbench:
             value = entry.get(key, "")
             if value:
                 lines.append(f"{key}: {value}")
-        self._write_summary_widget(self.run_history_text, "\n".join(lines))
+        _write_summary_widget(self.run_history_text, "\n".join(lines))
         status = str(entry.get("status", "") or "").strip().lower()
         status_text = {
             "completed": "[RUN] Completed",
@@ -7636,7 +7731,7 @@ class DesktopWorkbench:
         self.chart_canvas.delete("all")
         if not papers_path.exists():
             self.chart_canvas.configure(scrollregion=(0, 0, 0, 0))
-            self._write_summary_widget(
+            _write_summary_widget(
                 self.charts_summary_text,
                 "No papers.csv file is available yet, so the chart preview is empty.",
             )
@@ -7682,7 +7777,7 @@ class DesktopWorkbench:
         source_lines.append(
             f"Total screened records in chart input: {len(dataframe)}"
         )
-        self._write_summary_widget(self.charts_summary_text, "\n".join(source_lines))
+        _write_summary_widget(self.charts_summary_text, "\n".join(source_lines))
 
     def _refresh_screening_audit(self, papers_path: Path) -> None:
         """Load screening decisions and reasoning into the audit tab."""
@@ -7693,7 +7788,7 @@ class DesktopWorkbench:
         for item in self.screening_audit_tree.get_children():
             self.screening_audit_tree.delete(item)
         if not papers_path.exists():
-            self._write_summary_widget(
+            _write_summary_widget(
                 self.screening_audit_text,
                 "No papers.csv file is available yet, so there is no screening audit to inspect.",
             )
@@ -7723,9 +7818,9 @@ class DesktopWorkbench:
                 iid=item_id,
                 values=(
                     str(row_payload.get("title", ""))[:120],
-                    self._display_table_value("inclusion_decision", row_payload),
-                    self._display_table_value("relevance_score", row_payload),
-                    self._display_table_value("source", row_payload),
+                    _display_table_value("inclusion_decision", row_payload),
+                    _display_table_value("relevance_score", row_payload),
+                    _display_table_value("source", row_payload),
                 ),
                 tags=tags,
             )
@@ -7738,7 +7833,7 @@ class DesktopWorkbench:
             self.screening_audit_tree.focus(first_item)
             self._render_screening_audit_row(first_item)
         else:
-            self._write_summary_widget(self.screening_audit_text, "The audit table loaded, but it contains no rows.")
+            _write_summary_widget(self.screening_audit_text, "The audit table loaded, but it contains no rows.")
 
     def _handle_screening_audit_selection(self, _event: Any | None = None) -> None:
         """Render details for the selected screening audit row."""
@@ -7771,7 +7866,7 @@ class DesktopWorkbench:
             "",
             f"Extracted passage: {row.get('extracted_passage', '') or '(not available)'}",
         ]
-        self._write_summary_widget(self.screening_audit_text, "\n".join(lines))
+        _write_summary_widget(self.screening_audit_text, "\n".join(lines))
 
     def _open_document_from_table(self, key: str) -> None:
         """Open the currently selected result-row preview in the embedded document viewer."""
@@ -7803,10 +7898,10 @@ class DesktopWorkbench:
     def _show_document_preview(self, row: dict[str, Any], *, source_label: str) -> None:
         """Populate the document viewer tab from a result or audit row."""
 
-        document_path = self._candidate_document_path(row)
+        document_path = _candidate_document_path(row)
         summary_text, content_text = self._build_document_preview(row, source_label=source_label, document_path=document_path)
-        self._write_summary_widget(self.document_summary_text, summary_text)
-        self._write_summary_widget(self.document_content_text, content_text)
+        _write_summary_widget(self.document_summary_text, summary_text)
+        _write_summary_widget(self.document_content_text, content_text)
         if document_path is not None and document_path.exists():
             self.document_status_var.set(f"Linked local document: {document_path}")
             self._load_document_render(document_path)
@@ -7814,7 +7909,7 @@ class DesktopWorkbench:
             self.document_status_var.set("No linked local document found. Showing the best available metadata/text preview.")
             self._clear_document_render("No local PDF available for embedded rendering.")
         self.document_external_path = document_path if document_path is not None and document_path.exists() else None
-        decision_text, decision_tone = self._decision_badge_text(str(row.get("inclusion_decision", "") or ""))
+        decision_text, decision_tone = _decision_badge_text(str(row.get("inclusion_decision", "") or ""))
         self._set_badge_label(self.document_decision_badge, decision_text, decision_tone)
         source_value = str(row.get("source", "") or "").strip() or "Unknown source"
         self._set_badge_label(self.document_source_badge, f"[SRC] {source_value}", "info")
@@ -7859,8 +7954,8 @@ class DesktopWorkbench:
                 "If it is a PDF, the embedded renderer can still show pages when rendering support is available."
             )
 
-        self._write_summary_widget(self.document_summary_text, "\n".join(summary_lines))
-        self._write_summary_widget(self.document_content_text, content_text)
+        _write_summary_widget(self.document_summary_text, "\n".join(summary_lines))
+        _write_summary_widget(self.document_content_text, content_text)
         self.document_status_var.set(f"Selected local document: {document_path}")
         self.document_external_path = document_path
         self._load_document_render(document_path)
@@ -7873,66 +7968,12 @@ class DesktopWorkbench:
         if self.notebook is not None and self.document_tab is not None:
             self.notebook.select(self.document_tab)
 
-    def _candidate_document_path(self, row: dict[str, Any]) -> Path | None:
-        """Return the best local file path referenced by a row, if one exists."""
-
-        candidates = (
-            row.get("pdf_path"),
-            row.get("local_pdf_path"),
-            row.get("downloaded_pdf_path"),
-            row.get("document_path"),
-        )
-        for candidate in candidates:
-            if not candidate:
-                continue
-            path = Path(str(candidate))
-            if path.exists():
-                return path
-        return None
-
-    def _paper_from_row(self, row: dict[str, Any]) -> PaperMetadata | None:
-        """Convert a row payload into `PaperMetadata` for richer research-fit scoring."""
-
-        title = str(row.get("title", "") or "").strip()
-        if not title:
-            return None
-        raw_payload = row.get("raw_payload")
-        if isinstance(raw_payload, str):
-            try:
-                raw_payload = json.loads(raw_payload)
-            except json.JSONDecodeError:
-                raw_payload = {"raw_payload": raw_payload}
-        elif not isinstance(raw_payload, dict):
-            raw_payload = {}
-        for key in ("extracted_passage", "relevance_explanation", "abstract", "full_text_excerpt"):
-            value = row.get(key)
-            if value:
-                raw_payload.setdefault(key, value)
-        year_value = row.get("year")
-        parsed_year: int | None = None
-        if year_value not in (None, ""):
-            try:
-                parsed_year = int(str(year_value).strip())
-            except ValueError:
-                parsed_year = None
-        return PaperMetadata(
-            title=title,
-            abstract=str(row.get("abstract", "") or ""),
-            authors=str(row.get("authors", "") or ""),
-            year=parsed_year,
-            source=str(row.get("source", "") or ""),
-            doi=str(row.get("doi", "") or ""),
-            url=str(row.get("url", "") or row.get("landing_page_url", "") or ""),
-            venue=str(row.get("venue", "") or ""),
-            raw_payload=raw_payload,
-        )
-
     def _build_document_preview(
-        self,
-        row: dict[str, Any],
-        *,
-        source_label: str,
-        document_path: Path | None,
+            self,
+            row: dict[str, Any],
+            *,
+            source_label: str,
+            document_path: Path | None,
     ) -> tuple[str, str]:
         """Build the summary and content text shown by the embedded document viewer."""
 
@@ -7948,14 +7989,14 @@ class DesktopWorkbench:
             f"Retain reason: {row.get('retain_reason', '') or '(not available)'}",
             f"Exclusion reason: {row.get('exclusion_reason', '') or '(not available)'}",
         ]
-        extracted_topics, keyword_details = self._topic_detail_payload(row)
-        research_fit_label = str(self._row_value(row, "topic_prefilter_research_fit_label") or "").strip()
-        weighted_score = str(self._row_value(row, "topic_prefilter_weighted_score") or "").strip()
-        matched_count = str(self._row_value(row, "topic_prefilter_matched_keyword_count") or "").strip()
-        keyword_rule_count = str(self._row_value(row, "topic_prefilter_keyword_rule_count") or "").strip()
-        min_matches = str(self._row_value(row, "topic_prefilter_min_keyword_matches") or "").strip()
-        semantic_label = str(self._row_value(row, "topic_prefilter_label") or "").strip()
-        semantic_similarity = str(self._row_value(row, "topic_prefilter_similarity") or "").strip()
+        extracted_topics, keyword_details = _topic_detail_payload(row)
+        research_fit_label = str(_row_value(row, "topic_prefilter_research_fit_label") or "").strip()
+        weighted_score = str(_row_value(row, "topic_prefilter_weighted_score") or "").strip()
+        matched_count = str(_row_value(row, "topic_prefilter_matched_keyword_count") or "").strip()
+        keyword_rule_count = str(_row_value(row, "topic_prefilter_keyword_rule_count") or "").strip()
+        min_matches = str(_row_value(row, "topic_prefilter_min_keyword_matches") or "").strip()
+        semantic_label = str(_row_value(row, "topic_prefilter_label") or "").strip()
+        semantic_similarity = str(_row_value(row, "topic_prefilter_similarity") or "").strip()
         if research_fit_label or extracted_topics or keyword_details:
             lines.extend(
                 [
@@ -7977,7 +8018,7 @@ class DesktopWorkbench:
                     for detail in keyword_details[:5]
                 )
                 lines.append(f"- Top keyword matches: {top_matches}")
-        paper = self._paper_from_row(row)
+        paper = _paper_from_row(row)
         if paper is not None:
             try:
                 config = form_values_to_config(self._collect_form_values())
@@ -8176,19 +8217,6 @@ class DesktopWorkbench:
             messagebox.showerror("Path not found", f"{path} does not exist.")
             return
         self._show_document_preview_for_path(path)
-
-    def _open_path(self, path: Path) -> None:
-        """Open a file or directory using the host operating system defaults."""
-
-        if not path.exists():
-            messagebox.showerror("Path not found", f"{path} does not exist.")
-            return
-        if os.name == "nt":
-            os.startfile(path)  # type: ignore[attr-defined]
-        elif sys.platform == "darwin":
-            subprocess.run(["open", str(path)], check=False)
-        else:
-            subprocess.run(["xdg-open", str(path)], check=False)
 
     def _on_close(self) -> None:
         """Detach the UI log handler and close the root window cleanly."""
