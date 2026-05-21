@@ -288,7 +288,7 @@ class LocalTopicMatcher(BaseTopicMatcher):
             enabled=self.enabled,
             classification=classification,
             should_exclude=should_exclude,
-            keyword_overlap_score=weighted_keyword_score,
+            keyword_overlap_score=weighted_keyword_score / 100.0,
             research_fit_label=research_fit_label,
             weighted_keyword_score=weighted_keyword_score,
             min_keyword_matches=self.config.topic_prefilter_min_keyword_matches,
